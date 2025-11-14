@@ -2,7 +2,10 @@ import { geminiConfig } from '../config';
 
 // WARNING: Your Gemini API key is exposed here. This is not secure.
 const GEMINI_API_KEY = geminiConfig.apiKey;
-const API_URL = `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
+
+// [FIXED LINE]
+// Changed 'v1' to 'v1beta' and 'gemini-pro' to 'gemini-1.5-flash-latest'
+const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
 
 
 async function generateText(prompt) {
