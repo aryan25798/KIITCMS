@@ -5,7 +5,7 @@ const GEMINI_API_KEY = geminiConfig.apiKey;
 
 // [FIXED LINE]
 // Changed 'v1' to 'v1beta' and 'gemini-pro' to 'gemini-1.5-flash-latest'
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
+const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
 
 
 async function generateText(prompt) {
