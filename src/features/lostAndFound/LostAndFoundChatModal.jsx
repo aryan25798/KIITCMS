@@ -1,15 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { 
-    collection, 
-    query, 
-    orderBy, 
-    onSnapshot, 
-    addDoc, 
-    serverTimestamp, 
-    doc, 
-    setDoc 
-} from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import Spinner from '../../components/ui/Spinner';
 import { X, Send } from 'lucide-react';
@@ -21,61 +12,39 @@ const LostAndFoundChatModal = ({ user, chatInfo, onClose }) => {
     const chatEndRef = useRef(null);
     const { item, chatWith } = chatInfo;
 
-    // Chat ID Format: itemId_owner_finder (sorted)
     const chatId = useMemo(() => {
         if (!item.finderId) return null;
         const ids = [item.ownerId, item.finderId].sort();
         return `${item.id}_${ids.join('_')}`;
     }, [item.id, item.ownerId, item.finderId]);
 
-    // Load chat messages
     useEffect(() => {
         if (!chatId) {
             setLoading(false);
             return;
         }
-
         const messagesRef = collection(db, 'lostAndFoundChats', chatId, 'messages');
         const q = query(messagesRef, orderBy('timestamp', 'asc'));
-
         const unsubscribe = onSnapshot(q, (snapshot) => {
             setMessages(snapshot.docs.map(doc => doc.data()));
             setLoading(false);
         });
-
         return unsubscribe;
     }, [chatId]);
 
-    // Auto-scroll to latest msg
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
 
-    // Sending message (includes FIX)
     const handleSendMessage = async () => {
         if (!newMessage.trim() || !chatId) return;
-
-        // 🔥 FIX: ensure parent chat doc exists BEFORE writing messages
-        const chatRef = doc(db, "lostAndFoundChats", chatId);
-        await setDoc(
-            chatRef, 
-            {
-                ownerId: item.ownerId,
-                finderId: item.finderId,
-                itemId: item.id
-            },
-            { merge: true } // prevents overwrite
-        );
-
         const messagesRef = collection(db, 'lostAndFoundChats', chatId, 'messages');
-
         await addDoc(messagesRef, {
             text: newMessage,
             senderId: user.uid,
             senderName: user.displayName || user.email,
             timestamp: serverTimestamp()
         });
-
         setNewMessage('');
     };
 
@@ -92,43 +61,18 @@ const LostAndFoundChatModal = ({ user, chatInfo, onClose }) => {
                         <h3 className="text-xl font-bold text-white">Chat with {chatWith.name}</h3>
                         <p className="text-sm text-slate-400">Regarding: {item.itemName}</p>
                     </div>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white">
-                        <X size={24} />
-                    </button>
+                    <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button>
                 </header>
-
                 <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-4">
-                    {loading ? (
-                        <div className="flex justify-center items-center h-full">
-                            <Spinner />
-                        </div>
-                    ) : (
-                        messages.map((msg, index) => (
-                            <div
-                                key={index}
-                                className={`flex items-start gap-3 max-w-[80%] ${
-                                    msg.senderId === user.uid
-                                        ? 'self-end flex-row-reverse'
-                                        : 'self-start'
-                                }`}
-                            >
-                                <div
-                                    className={`p-3 rounded-lg ${
-                                        msg.senderId === user.uid
-                                            ? 'bg-cyan-600'
-                                            : 'bg-slate-700'
-                                    }`}
-                                >
-                                    <p className="text-sm whitespace-pre-wrap text-white">
-                                        {msg.text}
-                                    </p>
-                                </div>
+                    {loading ? <div className="flex justify-center items-center h-full"><Spinner /></div> : messages.map((msg, index) => (
+                        <div key={index} className={`flex items-start gap-3 max-w-[80%] ${msg.senderId === user.uid ? 'self-end flex-row-reverse' : 'self-start'}`}>
+                            <div className={`p-3 rounded-lg ${msg.senderId === user.uid ? 'bg-cyan-600' : 'bg-slate-700'}`}>
+                                <p className="text-sm whitespace-pre-wrap text-white">{msg.text}</p>
                             </div>
-                        ))
-                    )}
+                        </div>
+                    ))}
                     <div ref={chatEndRef} />
                 </div>
-
                 <div className="p-4 border-t border-slate-700">
                     <div className="flex items-center gap-2">
                         <input
@@ -138,12 +82,7 @@ const LostAndFoundChatModal = ({ user, chatInfo, onClose }) => {
                             placeholder="Type your message..."
                             className="flex-grow p-3 border border-slate-700 rounded-lg bg-slate-800 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
                         />
-                        <button
-                            onClick={handleSendMessage}
-                            className="p-3 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600"
-                        >
-                            <Send size={20} />
-                        </button>
+                        <button onClick={handleSendMessage} className="p-3 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600"><Send size={20}/></button>
                     </div>
                 </div>
             </motion.div>
