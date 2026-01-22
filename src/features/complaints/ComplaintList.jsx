@@ -116,7 +116,8 @@ const ComplaintList = () => {
         return null;
     }, [userId, role, departmentName]);
 
-    // --- 2. Fetch Stats ---
+    // --- 2. Fetch Stats (OPTIMIZED) ---
+    // Segregated from main list fetch to prevent re-running on filter changes
     const fetchStats = useCallback(async () => {
         if (!auth.currentUser) return; 
 
@@ -125,6 +126,7 @@ const ComplaintList = () => {
         
         try {
             const coll = collection(db, 'complaints');
+            // Using Promise.all for parallel execution
             const [totalSnap, resolvedSnap] = await Promise.all([
                 getCountFromServer(query(coll, ...constraints)),
                 getCountFromServer(query(coll, ...constraints, where('status', '==', 'Resolved')))
@@ -136,12 +138,11 @@ const ComplaintList = () => {
                 setStats({ total, pending: total - resolved, resolved });
             }
         } catch (error) {
-            // Silently fail on stats if permission denied, main fetch will handle error UI
             if (error.code !== 'permission-denied') console.error("Error stats:", error);
         }
     }, [getRoleConstraints]);
 
-    // --- 3. Fetch Complaints ---
+    // --- 3. Fetch Complaints (Data List) ---
     const fetchComplaints = useCallback(async (isNextPage = false) => {
         if (!auth.currentUser) return;
 
@@ -159,7 +160,11 @@ const ComplaintList = () => {
 
             if (statusFilter !== 'All') constraints.push(where('status', '==', statusFilter));
             constraints.push(orderBy('createdAt', 'desc'));
-            if (isNextPage && lastDoc) constraints.push(startAfter(lastDoc));
+            
+            if (isNextPage && lastDoc) {
+                constraints.push(startAfter(lastDoc));
+            }
+            
             constraints.push(limit(PAGE_SIZE));
 
             const finalQuery = query(q, ...constraints);
@@ -185,7 +190,7 @@ const ComplaintList = () => {
             if (error.code === 'permission-denied') {
                 if (isMounted.current) {
                     setPermissionError(true);
-                    setFirstFetchDone(true); // Stop spinner to show error UI
+                    setFirstFetchDone(true);
                     setLoading(false);
                 }
             }
@@ -197,38 +202,52 @@ const ComplaintList = () => {
         }
     }, [getRoleConstraints, statusFilter, lastDoc]);
 
-    // --- CRITICAL LOOP FIX: Main Effect ---
-    // We intentionally OMIT fetchComplaints/fetchStats from the dependency array.
-    // They are updated when 'lastDoc' changes, which would cause an infinite loop.
+    // --- EFFECT 1: Fetch Stats (Runs ONCE per User/Dept) ---
+    useEffect(() => {
+        if (userId && role) {
+            if (role === 'department' && !departmentName) return;
+            fetchStats();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userId, role, departmentName]); // Removed fetchStats to prevent loops
+
+    // --- EFFECT 2: Fetch List (Runs on Filter Change) ---
     useEffect(() => {
         if (userId && role) {
             if (role === 'department' && !departmentName) return;
 
             setLastDoc(null);
             fetchComplaints(false);
-            fetchStats();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [statusFilter, userId, role, departmentName]); 
+    }, [statusFilter, userId, role, departmentName]); // Removed fetchComplaints to prevent loops
 
     // --- Handlers ---
     const handleLoadMore = () => { if (!loadingMore && hasMore) fetchComplaints(true); };
-    const handleComplaintUpdate = (upd) => setComplaints(prev => prev.map(c => c.id === upd.id ? upd : c));
+    
+    const handleComplaintUpdate = (upd) => {
+        setComplaints(prev => prev.map(c => c.id === upd.id ? upd : c));
+    };
+    
     const handleComplaintDelete = (id) => {
         setComplaints(prev => prev.filter(c => c.id !== id));
-        setStats(prev => ({ ...prev, total: prev.total - 1 })); 
+        // Optimistic update for stats to avoid re-fetch
+        setStats(prev => ({ ...prev, total: Math.max(0, prev.total - 1) })); 
     };
+    
     const handleSelectComplaint = (id) => {
         setSelectedComplaints(prev => prev.includes(id) ? prev.filter(cid => cid !== id) : [...prev, id]);
     };
+    
     const handleBulkUpdate = async (status) => {
         if (selectedComplaints.length === 0) return;
         const batch = writeBatch(db);
         selectedComplaints.forEach(id => batch.update(doc(db, 'complaints', id), { status }));
         await batch.commit();
+        
         setComplaints(prev => prev.map(c => selectedComplaints.includes(c.id) ? { ...c, status } : c));
         setSelectedComplaints([]);
-        fetchStats(); 
+        fetchStats(); // Refetch stats only after a bulk action
     };
 
     const displayedComplaints = complaints.filter(c => c.title.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -238,7 +257,7 @@ const ComplaintList = () => {
         return <div className="flex justify-center items-center py-20"><Spinner size="h-12 w-12" color="border-cyan-400" /></div>;
     }
 
-    // --- Render: Permission Error (Department Mismatch) ---
+    // --- Render: Permission Error ---
     if (permissionError) {
         return (
             <div className="flex flex-col items-center justify-center py-12 text-center border border-red-500/30 bg-red-500/10 rounded-xl p-6">
@@ -253,19 +272,19 @@ const ComplaintList = () => {
     }
 
     return (
-        <div className="space-y-6 pb-20 md:pb-0"> {/* Padding for mobile floaters */}
+        <div className="space-y-6 pb-20 md:pb-0"> 
             
-            {/* Stats - Responsive Grid */}
+            {/* Stats */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <StatCard delay={0} title="Total" value={stats.total} icon={<ListTodo className="text-blue-400"/>} colorClass="bg-blue-500" />
                 <StatCard delay={1} title="Pending" value={stats.pending} icon={<Clock className="text-yellow-400"/>} colorClass="bg-yellow-500" />
                 <StatCard delay={2} title="Resolved" value={stats.resolved} icon={<CheckCircle className="text-green-400"/>} colorClass="bg-green-500" />
             </div>
 
-            {/* Main Container */}
+            {/* Main Content */}
             <div className="bg-slate-800/50 backdrop-blur-xl p-4 sm:p-6 rounded-2xl shadow-xl border border-slate-700/50">
                 
-                {/* Header Actions - Stack on Mobile */}
+                {/* Header */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                     <h2 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
                         {role === 'student' ? 'My Complaints' : 'Complaint Inbox'}
@@ -285,9 +304,8 @@ const ComplaintList = () => {
                     )}
                 </div>
 
-                {/* Filters - Responsive Grid */}
+                {/* Filters */}
                 <div className="flex flex-col md:flex-row gap-3 mb-6">
-                    {/* Search */}
                     <div className="relative flex-grow group">
                         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-cyan-400 transition-colors" size={20}/>
                         <input 
@@ -299,7 +317,6 @@ const ComplaintList = () => {
                         />
                     </div>
                     
-                    {/* Dropdown & Refresh */}
                     <div className="flex gap-2">
                         <div className="relative flex-grow md:flex-grow-0 md:w-48">
                             <Filter className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={18}/>
@@ -335,7 +352,7 @@ const ComplaintList = () => {
                     </div>
                 </div>
 
-                {/* List Content */}
+                {/* List */}
                 <div className="space-y-4 min-h-[300px]">
                     <AnimatePresence mode='popLayout'>
                         {displayedComplaints.length > 0 ? (
@@ -377,7 +394,6 @@ const ComplaintList = () => {
                         )}
                     </AnimatePresence>
 
-                    {/* Load More */}
                     {hasMore && displayedComplaints.length > 0 && (
                         <div className="flex justify-center pt-4">
                             <button onClick={handleLoadMore} disabled={loadingMore} className="flex items-center gap-2 px-6 py-2.5 bg-slate-800 text-slate-300 rounded-full border border-slate-700 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50">

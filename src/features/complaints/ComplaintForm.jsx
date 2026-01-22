@@ -1,23 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'; // Updated to Resumable
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../../services/firebase';
 import { AI_HELPERS } from '../../services/ai';
 import { createNotification } from '../../services/notifications';
 import { EmailService } from '../../services/email';
 import Spinner from '../../components/ui/Spinner';
-import { z } from 'zod'; // Zod for validation
+import { z } from 'zod'; // ✅ ADDED: Zod for industry-grade validation
 import {
     ShieldQuestion, FileUp, Send, Bot, User, Mic, Square, Paperclip, CheckCircle, AlertCircle, X
 } from 'lucide-react';
 
-// --- VALIDATION SCHEMA ---
+// --- ✅ SECURITY: ZOD VALIDATION SCHEMA ---
+// This acts as a firewall before data leaves the client.
 const complaintSchema = z.object({
-    name: z.string().min(2, "Name must be at least 2 characters."),
-    rollNo: z.string().regex(/^[A-Za-z]+\/\d+\/\d+$/, "Invalid Roll No format (e.g., BTECH/1001/24)."),
-    title: z.string().min(5, "Title must be at least 5 characters."),
-    description: z.string().min(20, "Please provide a more detailed description (min 20 chars)."),
+    name: z.string()
+        .min(2, "Name must be at least 2 characters.")
+        .max(50, "Name is too long (max 50 chars)."), // Cap length
+    rollNo: z.string()
+        .regex(/^[A-Za-z]+\/\d+\/\d+$/, "Invalid Roll No format (e.g., BTECH/1001/24)."),
+    title: z.string()
+        .min(5, "Title must be at least 5 characters.")
+        .max(100, "Title is too long (max 100 chars)."), // Cap length
+    description: z.string()
+        .min(20, "Please provide a more detailed description (min 20 chars).")
+        .max(2000, "Description is too long (max 2000 chars)."), // Prevent 10MB payloads
+    isAnonymous: z.boolean()
 });
 
 const ComplaintForm = () => {
@@ -44,7 +53,7 @@ const ComplaintForm = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [transcriptionStatus, setTranscriptionStatus] = useState('');
     const [submissionError, setSubmissionError] = useState('');
-    const [uploadProgress, setUploadProgress] = useState(0); // 0 to 100
+    const [uploadProgress, setUploadProgress] = useState(0); 
 
     // Refs
     const recognitionRef = useRef(null);
@@ -105,8 +114,10 @@ const ComplaintForm = () => {
     // --- AI TRIAGE LOGIC ---
 
     const handleGetAIHelp = async () => {
-        // Basic pre-check before hitting AI
-        const result = complaintSchema.safeParse(formData);
+        // ✅ ZOD CHECK: Validate only the description/title before hitting AI API
+        const partialSchema = complaintSchema.pick({ title: true, description: true });
+        const result = partialSchema.safeParse(formData);
+        
         if (!result.success) {
             const errors = {};
             result.error.issues.forEach(issue => {
@@ -152,13 +163,14 @@ const ComplaintForm = () => {
     // --- SUBMISSION LOGIC ---
 
     const handleFormalSubmit = async () => {
-        // 1. Final Validation
+        // ✅ ZOD CHECK: Full validation before submission
         const result = complaintSchema.safeParse(formData);
+        
         if (!result.success) {
             const errors = {};
             result.error.issues.forEach(issue => { errors[issue.path[0]] = issue.message; });
             setValidationErrors(errors);
-            setSubmissionError("Please fix the errors before submitting.");
+            setSubmissionError("Please fix the errors highlighted above.");
             return; // STOP execution
         }
 
@@ -171,6 +183,11 @@ const ComplaintForm = () => {
 
             // 2. Resumable Upload with Progress
             if (attachment) {
+                // Size Check (e.g., 5MB limit) - Extra safety
+                if (attachment.size > 5 * 1024 * 1024) {
+                    throw new Error("Attachment size exceeds 5MB limit.");
+                }
+
                 const storageRef = ref(storage, `attachments/${Date.now()}_${attachment.name}`);
                 const uploadTask = uploadBytesResumable(storageRef, attachment);
 
@@ -242,7 +259,7 @@ const ComplaintForm = () => {
 
         } catch (error) {
             console.error("Critical failure:", error);
-            setSubmissionError("Submission failed. Please check your connection and try again.");
+            setSubmissionError(error.message || "Submission failed. Please check your connection and try again.");
         } finally {
             setIsSubmitting(false);
             setUploadProgress(0);
