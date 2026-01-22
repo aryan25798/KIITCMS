@@ -28,8 +28,8 @@ export const AuthProvider = ({ children }) => {
 
                     // "When it should be there" Check:
                     // If it's a System Email (@system.com) but the 'department' claim is missing,
-                    // we FORCE a refresh because we know they *should* have it.
-                    if (currentUser.email?.endsWith('@system.com') && !claims.department) {
+                    // we FORCE a refresh because we know they *should* have it if they are legit.
+                    if (currentUser.email?.endsWith('@system.com') && !claims.department && !claims.admin) {
                         console.log("🔄 System user detected with stale claims. Forcing token refresh...");
                         tokenResult = await currentUser.getIdTokenResult(true);
                         claims = tokenResult.claims;
@@ -39,7 +39,7 @@ export const AuthProvider = ({ children }) => {
                     console.log("🔍 FRONTEND CLAIMS CHECK:", claims);
 
                     // --- ADMIN BYPASS ---
-                    // If the user is an Admin, they bypass status checks.
+                    // If the user is an Admin (verified by Claim), they bypass status checks.
                     if (claims.admin === true) {
                         console.log("✅ FRONTEND: I AM ADMIN - Bypassing status checks.");
                         setUser(currentUser);
@@ -48,8 +48,8 @@ export const AuthProvider = ({ children }) => {
                         return;
                     }
 
-                    // --- DEPARTMENT BYPASS (New Cloud Logic) ---
-                    // If the user has the department claim (assigned by Cloud Functions), they bypass standard checks.
+                    // --- DEPARTMENT BYPASS ---
+                    // If the user has the department claim, they bypass standard checks.
                     if (claims.department === true) {
                         console.log("✅ FRONTEND: I AM DEPARTMENT - Bypassing status checks.");
                         setUser(currentUser);
@@ -58,9 +58,9 @@ export const AuthProvider = ({ children }) => {
                         return;
                     }
 
-                    // 2. Fetch User Profile to determine Role & Status
-                    let determinedRole = 'student'; // Default role
-                    let status = 'approved'; // Default status (for legacy users)
+                    // 2. Fetch User Profile from Firestore to determine Role & Status
+                    let determinedRole = 'student'; // Default safe role
+                    let status = 'pending'; // Default safe status
 
                     const userRef = doc(db, 'users', currentUser.uid);
                     const userSnap = await getDoc(userRef);
@@ -69,26 +69,35 @@ export const AuthProvider = ({ children }) => {
                     const mentorSnap = await getDoc(mentorRef);
 
                     if (userSnap.exists()) {
-                        // It's a Student
+                        // --- CASE A: STANDARD USER / STUDENT ---
                         const userData = userSnap.data();
                         determinedRole = userData.role || 'student';
                         
                         // Check for specific status. If missing (legacy user), assume approved.
                         if (userData.status !== undefined) {
                             status = userData.status;
+                        } else {
+                            status = 'approved';
                         }
 
                     } else if (mentorSnap.exists()) {
-                        // It's a Mentor
+                        // --- CASE B: MENTOR ---
                         const mentorProfile = mentorSnap.data();
                         setMentorData(mentorProfile);
                         determinedRole = 'mentor';
-                        status = mentorProfile.status; // 'pending' or 'approved'
+                        
+                        // ✅ CRITICAL FIX: Default to 'pending' if status is missing for Mentors
+                        // This prevents unauthorized access if the backend hasn't processed them yet.
+                        status = mentorProfile.status || 'pending'; 
                     
-                    } else if (currentUser.email.endsWith('@system.com')) {
-                        // Department Staff (Legacy/Fallback - usually caught by claims now)
-                        determinedRole = 'department';
-                        status = 'approved';
+                    } else {
+                        // --- CASE C: NO PROFILE FOUND (BUG FIX) ---
+                        // Previously, we automatically granted 'department' role to @system.com emails here.
+                        // We have REMOVED that. Now, if no profile exists, we treat them as a 'guest' or 'student'
+                        // with 'pending' status. They must wait for their Firestore doc to be created.
+                        console.warn("⚠️ No Firestore profile found for user. Defaulting to safe state.");
+                        determinedRole = 'student';
+                        status = 'pending';
                     }
 
                     setUser(currentUser);
@@ -96,6 +105,7 @@ export const AuthProvider = ({ children }) => {
                     // 3. Logic Gate: Apply Status Restrictions
                     if (status === 'pending') {
                         // User is registered but not approved by admin
+                        // This catches BOTH pending students AND pending mentors
                         setRole('pending_approval');
                         setIsAwaitingVerification(false); // Don't show email verify if they aren't even approved yet
                     } else if (status === 'rejected') {
@@ -120,6 +130,7 @@ export const AuthProvider = ({ children }) => {
                     setRole(null);
                 }
             } else {
+                // User is signed out
                 setUser(null);
                 setRole(null);
                 setMentorData(null);
