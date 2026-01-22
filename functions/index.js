@@ -34,6 +34,13 @@ exports.grantAdminRole = onCall(async (request) => {
     try {
         const user = await admin.auth().getUserByEmail(targetEmail);
         await admin.auth().setCustomUserClaims(user.uid, { admin: true });
+        
+        // Also update Firestore to keep it in sync
+        await admin.firestore().collection('users').doc(user.uid).set({
+            role: 'admin',
+            status: 'approved'
+        }, { merge: true });
+
         return { success: true, message: `User ${targetEmail} is now an admin.` };
     } catch (error) {
         throw new HttpsError("internal", error.message);
@@ -196,64 +203,89 @@ exports.deleteUserAccount = onCall(async (request) => {
 
 
 // ==================================================================
-// 5. ADMIN: UPDATE STATUS (Gen 2)
+// 5. ADMIN: UPDATE STATUS (Gen 2 - UPDATED FOR SECURITY APPROVAL)
 // ==================================================================
 exports.updateUserStatus = onCall(async (request) => {
+    // 1. Auth Checks
     if (!request.auth) {
         throw new HttpsError("unauthenticated", "User is not logged in.");
     }
-
     if (request.auth.token.admin !== true) {
-         throw new HttpsError(
-             "permission-denied", 
-             "Access Denied: Only admins can change user status."
-         );
+         throw new HttpsError("permission-denied", "Access Denied: Only admins can change user status.");
     }
 
     const { targetUid, status, collectionName } = request.data; 
-
     if (!targetUid || !status) {
         throw new HttpsError("invalid-argument", "Target UID and Status are required.");
     }
 
     try {
         const coll = collectionName || 'users';
+        
+        // 2. Update Firestore Status
         await admin.firestore().collection(coll).doc(targetUid).update({
             status: status,
             statusUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
             statusUpdatedBy: request.auth.uid
         });
+
+        // 3. ✅ DYNAMIC PERMISSIONS: Assign/Revoke Claims based on Status
+        // Only applies to the 'users' collection (where dept/admin staff live)
+        if (coll === 'users') {
+            const userDoc = await admin.firestore().collection('users').doc(targetUid).get();
+            if (userDoc.exists) {
+                const userData = userDoc.data();
+                const userRole = userData.role;
+
+                if (status === 'approved') {
+                    // GRANT Privileges only when Admin approves
+                    if (userRole === 'department') {
+                        await admin.auth().setCustomUserClaims(targetUid, { department: true });
+                        console.log(`✅ Granted Department Claim to ${targetUid}`);
+                    } else if (userRole === 'admin') {
+                        await admin.auth().setCustomUserClaims(targetUid, { admin: true });
+                        console.log(`✅ Granted Admin Claim to ${targetUid}`);
+                    }
+                } else {
+                    // REVOKE Privileges (if pending or rejected)
+                    await admin.auth().setCustomUserClaims(targetUid, {}); 
+                    console.log(`🚫 Revoked Claims for ${targetUid}`);
+                }
+            }
+        }
+
         return { success: true, message: `User status updated to ${status}` };
     } catch (error) {
+        console.error("Update Status Error:", error);
         throw new HttpsError("internal", "Failed to update status: " + error.message);
     }
 });
 
 // ==================================================================
-// 6. AUTOMATIC ROLE ASSIGNMENT (Gen 1 Fixed)
+// 6. AUTOMATIC ROLE ASSIGNMENT (Gen 1 - UPDATED TO PENDING)
 // ==================================================================
-// ✅ FIX: Use the imported authTrigger variable here
 exports.processNewUser = authTrigger.user().onCreate(async (user) => {
     const email = user.email || '';
     const uid = user.uid;
 
     if (email.endsWith('@system.com')) {
         try {
-            await admin.auth().setCustomUserClaims(uid, { department: true });
-
+            // ✅ CHANGE: Do NOT set custom claims yet.
+            // Just mark them as 'pending' in Firestore.
+            
             await admin.firestore().collection('users').doc(uid).set({
                 uid: uid,
                 email: email,
                 displayName: user.displayName || 'Department Staff',
                 role: 'department', 
-                status: 'approved', 
+                status: 'pending', // <--- Forced Pending State for Safety
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
                 departmentName: email.split('@')[0].toUpperCase() 
             }, { merge: true });
 
-            console.log(`✅ Success: ${email} is now a Department User.`);
+            console.log(`📝 New Department User Registered (Pending Approval): ${email}`);
         } catch (error) {
-            console.error(`❌ Error promoting user ${email}:`, error);
+            console.error(`❌ Error processing user ${email}:`, error);
         }
     }
     return null;

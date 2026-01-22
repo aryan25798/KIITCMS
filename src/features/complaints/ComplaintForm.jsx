@@ -1,47 +1,75 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'; // Updated to Resumable
 import { db, storage } from '../../services/firebase';
 import { AI_HELPERS } from '../../services/ai';
 import { createNotification } from '../../services/notifications';
 import { EmailService } from '../../services/email';
 import Spinner from '../../components/ui/Spinner';
+import { z } from 'zod'; // Zod for validation
 import {
-    ShieldQuestion, FileUp, Send, Bot, User, Mic, Square, Paperclip, CheckCircle
+    ShieldQuestion, FileUp, Send, Bot, User, Mic, Square, Paperclip, CheckCircle, AlertCircle, X
 } from 'lucide-react';
+
+// --- VALIDATION SCHEMA ---
+const complaintSchema = z.object({
+    name: z.string().min(2, "Name must be at least 2 characters."),
+    rollNo: z.string().regex(/^[A-Za-z]+\/\d+\/\d+$/, "Invalid Roll No format (e.g., BTECH/1001/24)."),
+    title: z.string().min(5, "Title must be at least 5 characters."),
+    description: z.string().min(20, "Please provide a more detailed description (min 20 chars)."),
+});
 
 const ComplaintForm = () => {
     const { user } = useOutletContext();
     const navigate = useNavigate();
 
+    // Form State
     const [step, setStep] = useState('initial');
-    const [title, setTitle] = useState('');
-    const [description, setDescription] = useState('');
-    const [name, setName] = useState(user.displayName || '');
-    const [rollNo, setRollNo] = useState('');
+    const [formData, setFormData] = useState({
+        title: '',
+        description: '',
+        name: user.displayName || '',
+        rollNo: '',
+        isAnonymous: false
+    });
+    const [attachment, setAttachment] = useState(null);
+    const [validationErrors, setValidationErrors] = useState({});
+
+    // Process State
     const [chatHistory, setChatHistory] = useState([]);
     const [triageInput, setTriageInput] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isLoadingAI, setIsLoadingAI] = useState(false);
-    const [isAnonymous, setIsAnonymous] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [transcriptionStatus, setTranscriptionStatus] = useState('');
-    const [attachment, setAttachment] = useState(null);
     const [submissionError, setSubmissionError] = useState('');
+    const [uploadProgress, setUploadProgress] = useState(0); // 0 to 100
+
+    // Refs
     const recognitionRef = useRef(null);
     const chatEndRef = useRef(null);
     const fileInputRef = useRef(null);
 
     useEffect(() => {
         if (user && user.displayName) {
-            setName(user.displayName);
+            setFormData(prev => ({ ...prev, name: user.displayName }));
         }
     }, [user]);
 
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [chatHistory]);
+
+    // --- HANDLERS ---
+
+    const handleInputChange = (field, value) => {
+        setFormData(prev => ({ ...prev, [field]: value }));
+        // Clear specific error when user types
+        if (validationErrors[field]) {
+            setValidationErrors(prev => ({ ...prev, [field]: null }));
+        }
+    };
 
     const handleAudioToggle = () => {
         if (isRecording) {
@@ -66,7 +94,7 @@ const ComplaintForm = () => {
                     }
                 }
                 if (final_transcript) {
-                    setDescription(prev => (prev ? prev + ' ' : '') + final_transcript);
+                    setFormData(prev => ({ ...prev, description: (prev.description ? prev.description + ' ' : '') + final_transcript }));
                 }
             };
             recognitionRef.current = recognition;
@@ -74,9 +102,22 @@ const ComplaintForm = () => {
         }
     };
 
+    // --- AI TRIAGE LOGIC ---
+
     const handleGetAIHelp = async () => {
-        if (!description.trim() || !name.trim() || !rollNo.trim() || !title.trim()) return;
+        // Basic pre-check before hitting AI
+        const result = complaintSchema.safeParse(formData);
+        if (!result.success) {
+            const errors = {};
+            result.error.issues.forEach(issue => {
+                errors[issue.path[0]] = issue.message;
+            });
+            setValidationErrors(errors);
+            return;
+        }
+
         setIsLoadingAI(true);
+        const { title, description } = formData;
         const userMessage = { role: 'user', text: description };
         const initialHistory = [{ role: 'assistant', text: `Okay, let's try to solve this issue about "${title}". Here are some steps:` }];
         try {
@@ -108,92 +149,113 @@ const ComplaintForm = () => {
         }
     };
 
+    // --- SUBMISSION LOGIC ---
+
     const handleFormalSubmit = async () => {
+        // 1. Final Validation
+        const result = complaintSchema.safeParse(formData);
+        if (!result.success) {
+            const errors = {};
+            result.error.issues.forEach(issue => { errors[issue.path[0]] = issue.message; });
+            setValidationErrors(errors);
+            setSubmissionError("Please fix the errors before submitting.");
+            return; // STOP execution
+        }
+
         setIsSubmitting(true);
         setSubmissionError('');
-        let attachmentURL = '';
+        setUploadProgress(0);
 
         try {
-            // STEP 1: Upload Attachment (If fails, we abort because user expects the image to be there)
+            let attachmentURL = '';
+
+            // 2. Resumable Upload with Progress
             if (attachment) {
                 const storageRef = ref(storage, `attachments/${Date.now()}_${attachment.name}`);
-                const snapshot = await uploadBytes(storageRef, attachment);
-                attachmentURL = await getDownloadURL(snapshot.ref);
+                const uploadTask = uploadBytesResumable(storageRef, attachment);
+
+                await new Promise((resolve, reject) => {
+                    uploadTask.on('state_changed', 
+                        (snapshot) => {
+                            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                            setUploadProgress(progress);
+                        },
+                        (error) => {
+                            console.error("Upload failed:", error);
+                            reject(error);
+                        },
+                        async () => {
+                            attachmentURL = await getDownloadURL(uploadTask.snapshot.ref);
+                            resolve();
+                        }
+                    );
+                });
             }
 
-            // STEP 2: Prepare Description & AI Analysis (Resilient)
-            const fullDescription = `Initial Issue: ${description}\n\n--- AI Triage Log ---\n${chatHistory.map(m => `${m.role}: ${m.text}`).join('\n')}`;
+            // 3. Prepare Data
+            const fullDescription = `Initial Issue: ${formData.description}\n\n--- AI Triage Log ---\n${chatHistory.map(m => `${m.role}: ${m.text}`).join('\n')}`;
             
+            // 4. AI Categorization (Resilient)
             let aiData = { category: 'General', priority: 'Medium', priorityLevel: 2, assignedDept: 'Unassigned' };
             try {
-                // Try to get AI analysis, but if it fails (API limits/Errors), use defaults
                 aiData = await AI_HELPERS.getCategoryAndPriority(fullDescription);
             } catch (aiError) {
-                console.warn("AI Analysis failed, defaulting to General/Medium:", aiError);
+                console.warn("AI Analysis failed, defaulting.", aiError);
             }
             const { category, priority, priorityLevel, assignedDept } = aiData;
 
-            // STEP 3: Save to Database (CRITICAL - If this fails, we throw to the main catch)
+            // 5. Database Write
             const docRef = await addDoc(collection(db, 'complaints'), {
-                title, description: fullDescription, userId: user.uid, userName: name, userEmail: user.email,
-                userRollNo: rollNo, isAnonymous, status: 'Pending', createdAt: serverTimestamp(),
+                title: formData.title,
+                description: fullDescription,
+                userId: user.uid,
+                userName: formData.name,
+                userEmail: user.email,
+                userRollNo: formData.rollNo,
+                isAnonymous: formData.isAnonymous,
+                status: 'Pending',
+                createdAt: serverTimestamp(),
                 category, priority, priorityLevel, assignedDept, attachmentURL, isEscalated: false,
                 rating: null, ratingComment: ''
             });
-            
-            // --- EVERYTHING BELOW IS NON-CRITICAL ---
-            
-            // STEP 4: Notifications (Safe Wrap)
+
+            // 6. Side Effects (Notifications/Email) - Non-Blocking
             if (assignedDept !== 'Unassigned') {
-                try {
-                    await createNotification({
-                        recipientDept: assignedDept,
-                        message: `New [${priority}] priority complaint '${title}' has been assigned to your department.`,
-                        complaintId: docRef.id,
-                        type: 'new_complaint'
-                    });
-                } catch (notifError) {
-                    console.error("Internal notification failed (ignored):", notifError);
-                }
+                createNotification({
+                    recipientDept: assignedDept,
+                    message: `New [${priority}] priority complaint '${formData.title}' has been assigned to your department.`,
+                    complaintId: docRef.id,
+                    type: 'new_complaint'
+                }).catch(err => console.error("Notification failed", err));
             }
 
-            // STEP 5: EmailJS (Safe Wrap - The part causing your 400 Error)
             const templateParams = {
-                to_name: name,
-                complaint_title: title,
+                to_name: formData.name,
+                complaint_title: formData.title,
                 complaint_id: docRef.id,
                 user_email: user.email
             };
+            EmailService.sendNewComplaintEmail(templateParams).catch(err => console.error("Email failed", err));
 
-            try {
-                await EmailService.sendNewComplaintEmail(templateParams);
-            } catch (emailError) {
-                // Log the error but DO NOT stop the success screen
-                console.error("EmailJS failed (ignored):", emailError);
-            }
-
-            // Success!
+            // Success
             setStep('submitted');
 
         } catch (error) {
-            console.error("Critical failure in complaint submission:", error);
+            console.error("Critical failure:", error);
             setSubmissionError("Submission failed. Please check your connection and try again.");
         } finally {
             setIsSubmitting(false);
+            setUploadProgress(0);
         }
     };
 
-    const resetForm = () => {
-        setStep('initial');
-        setTitle('');
-        setDescription('');
-        setChatHistory([]);
-        setName(user.displayName || '');
-        setRollNo('');
-        setIsAnonymous(false);
-        setAttachment(null);
-        navigate('/new-complaint');
-    };
+    // --- RENDER HELPERS ---
+
+    const renderError = (field) => validationErrors[field] && (
+        <p className="text-red-400 text-xs mt-1 flex items-center gap-1">
+            <AlertCircle size={12} /> {validationErrors[field]}
+        </p>
+    );
 
     if (step === 'submitted') {
         return (
@@ -201,7 +263,7 @@ const ComplaintForm = () => {
                 <CheckCircle className="w-20 h-20 mx-auto text-green-400 bg-green-500/10 rounded-full p-2" />
                 <h2 className="text-3xl font-bold mt-4 text-white">Complaint Submitted!</h2>
                 <p className="text-slate-300 mt-2">Your complaint has been logged. You can track its status in your dashboard.</p>
-                {submissionError && <p className="text-yellow-500 text-xs mt-2">(Note: Email notification could not be sent, but admin has received the ticket)</p>}
+                {submissionError && <p className="text-yellow-500 text-xs mt-2">(Note: Notifications may have failed, but ticket is created)</p>}
                 <button onClick={() => navigate('/portal/dashboard')} className="mt-8 px-8 py-3 bg-cyan-500 text-white font-semibold rounded-lg hover:bg-cyan-600 transition-colors">
                     Back to Dashboard
                 </button>
@@ -231,6 +293,20 @@ const ComplaintForm = () => {
                     <input value={triageInput} onChange={(e) => setTriageInput(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleTriageChatSend()} placeholder="Reply to the AI..." className="flex-grow p-3 border border-slate-700 rounded-lg bg-slate-900/50 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"/>
                     <button onClick={handleTriageChatSend} disabled={isLoadingAI} className="p-3 bg-cyan-500 text-white rounded-lg hover:bg-cyan-600 disabled:bg-cyan-400/50 transition-colors"><Send size={20}/></button>
                 </div>
+                
+                {/* Progress Bar during Triage Submission */}
+                {isSubmitting && attachment && (
+                    <div className="mb-4">
+                        <div className="flex justify-between text-xs text-slate-400 mb-1">
+                            <span>Uploading Attachment...</span>
+                            <span>{Math.round(uploadProgress)}%</span>
+                        </div>
+                        <div className="w-full bg-slate-700 rounded-full h-2">
+                            <div className="bg-cyan-500 h-2 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
+                        </div>
+                    </div>
+                )}
+
                 <div className="text-center mt-6">
                     <p className="text-sm text-slate-400 mb-3">If the AI couldn't solve your issue, you can submit a formal complaint.</p>
                     <button onClick={handleFormalSubmit} disabled={isSubmitting} className="flex items-center justify-center gap-2 w-full px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:bg-gray-500 transition-colors">
@@ -247,14 +323,48 @@ const ComplaintForm = () => {
             <h2 className="text-2xl font-bold mb-6 text-white">File a New Complaint</h2>
             <form onSubmit={(e) => { e.preventDefault(); handleGetAIHelp(); }}>
                 <div className="grid md:grid-cols-2 gap-4 mb-4">
-                    <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Full Name" className="w-full p-3 border border-slate-700 rounded-lg bg-slate-900/50 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500" required />
-                    <input type="text" value={rollNo} onChange={(e) => setRollNo(e.target.value)} placeholder="Roll No. (e.g. BTECH/1001/24)" className="w-full p-3 border border-slate-700 rounded-lg bg-slate-900/50 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500" required />
+                    <div>
+                        <input 
+                            type="text" 
+                            value={formData.name} 
+                            onChange={(e) => handleInputChange('name', e.target.value)} 
+                            placeholder="Full Name" 
+                            className={`w-full p-3 border rounded-lg bg-slate-900/50 text-white placeholder-slate-500 focus:outline-none focus:ring-2 ${validationErrors.name ? 'border-red-500 focus:ring-red-500' : 'border-slate-700 focus:ring-cyan-500'}`}
+                        />
+                        {renderError('name')}
+                    </div>
+                    <div>
+                        <input 
+                            type="text" 
+                            value={formData.rollNo} 
+                            onChange={(e) => handleInputChange('rollNo', e.target.value)} 
+                            placeholder="Roll No. (e.g. BTECH/1001/24)" 
+                            className={`w-full p-3 border rounded-lg bg-slate-900/50 text-white placeholder-slate-500 focus:outline-none focus:ring-2 ${validationErrors.rollNo ? 'border-red-500 focus:ring-red-500' : 'border-slate-700 focus:ring-cyan-500'}`}
+                        />
+                        {renderError('rollNo')}
+                    </div>
                 </div>
+                
                 <div className="mb-4">
-                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Complaint Title (e.g., Wi-Fi not working in Hostel B)" className="w-full p-3 border border-slate-700 rounded-lg bg-slate-900/50 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500" required />
+                    <input 
+                        type="text" 
+                        value={formData.title} 
+                        onChange={(e) => handleInputChange('title', e.target.value)} 
+                        placeholder="Complaint Title (e.g., Wi-Fi not working in Hostel B)" 
+                        className={`w-full p-3 border rounded-lg bg-slate-900/50 text-white placeholder-slate-500 focus:outline-none focus:ring-2 ${validationErrors.title ? 'border-red-500 focus:ring-red-500' : 'border-slate-700 focus:ring-cyan-500'}`}
+                    />
+                    {renderError('title')}
                 </div>
+
                 <div className="mb-4 relative">
-                    <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe your issue in detail..." className="w-full p-3 border border-slate-700 rounded-lg h-36 bg-slate-900/50 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500" required />
+                    <textarea 
+                        value={formData.description} 
+                        onChange={(e) => handleInputChange('description', e.target.value)} 
+                        placeholder="Describe your issue in detail..." 
+                        className={`w-full p-3 border rounded-lg h-36 bg-slate-900/50 text-white placeholder-slate-500 focus:outline-none focus:ring-2 ${validationErrors.description ? 'border-red-500 focus:ring-red-500' : 'border-slate-700 focus:ring-cyan-500'}`}
+                    />
+                    {renderError('description')}
+                    
                     <div className="absolute bottom-3 right-3 flex items-center gap-2">
                         {transcriptionStatus && <p className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded">{transcriptionStatus}</p>}
                         <button type="button" onClick={handleAudioToggle} className={`flex items-center justify-center w-10 h-10 rounded-full text-white transition-colors ${isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-slate-600 hover:bg-slate-500'}`}>
@@ -262,17 +372,34 @@ const ComplaintForm = () => {
                         </button>
                     </div>
                 </div>
+
                 <div className="mb-4">
                     <input type="file" ref={fileInputRef} onChange={(e) => setAttachment(e.target.files[0])} className="hidden" accept="image/*" />
-                    <button type="button" onClick={() => fileInputRef.current.click()} className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-slate-300 hover:bg-slate-700">
-                        <Paperclip size={18} />
-                        <span>{attachment ? `Attached: ${attachment.name}` : 'Attach an Image (Optional)'}</span>
-                    </button>
+                    
+                    {attachment ? (
+                        <div className="flex items-center justify-between p-3 bg-slate-700/50 border border-slate-600 rounded-lg">
+                            <div className="flex items-center gap-2 text-slate-300 overflow-hidden">
+                                <Paperclip size={18} />
+                                <span className="truncate">{attachment.name}</span>
+                                <span className="text-xs text-slate-500">({(attachment.size / 1024 / 1024).toFixed(2)} MB)</span>
+                            </div>
+                            <button type="button" onClick={() => { setAttachment(null); fileInputRef.current.value = ''; }} className="text-slate-400 hover:text-white">
+                                <X size={18} />
+                            </button>
+                        </div>
+                    ) : (
+                        <button type="button" onClick={() => fileInputRef.current.click()} className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-slate-300 hover:bg-slate-700">
+                            <Paperclip size={18} />
+                            <span>Attach an Image (Optional)</span>
+                        </button>
+                    )}
                 </div>
+
                 <div className="flex items-center mb-6">
-                    <input id="anonymous" type="checkbox" checked={isAnonymous} onChange={(e) => setIsAnonymous(e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500 bg-slate-700" />
+                    <input id="anonymous" type="checkbox" checked={formData.isAnonymous} onChange={(e) => handleInputChange('isAnonymous', e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500 bg-slate-700" />
                     <label htmlFor="anonymous" className="ml-3 block text-sm text-slate-300">Submit Anonymously (your details will be hidden from admins)</label>
                 </div>
+
                 <button type="submit" disabled={isLoadingAI} className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-bold rounded-lg hover:shadow-lg hover:shadow-cyan-500/30 transition-shadow disabled:opacity-60">
                     {isLoadingAI ? <Spinner /> : <ShieldQuestion size={22} />}
                     {isLoadingAI ? 'Analyzing...' : 'Get AI Help First'}

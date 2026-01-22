@@ -8,7 +8,7 @@ import MentorProfileManagement from './MentorProfileManagement';
 import ScheduleMeeting from './ScheduleMeeting';
 import Spinner from '../../components/ui/Spinner';
 import StatusPill from '../../components/ui/StatusPill';
-import { MessageSquare, UserX } from 'lucide-react';
+import { MessageSquare, UserX, CheckCircle, AlertCircle, X } from 'lucide-react';
 
 const MentorDashboard = () => {
     const { user, mentorData, setMentorData, onChat } = useOutletContext();
@@ -18,6 +18,20 @@ const MentorDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [activeView, setActiveView] = useState('requests');
     const [menteeToRemove, setMenteeToRemove] = useState(null);
+    
+    // --- Custom Toast State ---
+    const [toast, setToast] = useState(null); // { message, type: 'success' | 'error' }
+
+    useEffect(() => {
+        if (toast) {
+            const timer = setTimeout(() => setToast(null), 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [toast]);
+
+    const showToast = (message, type = 'success') => {
+        setToast({ message, type });
+    };
 
     useEffect(() => {
         setLoading(true);
@@ -73,9 +87,11 @@ const MentorDashboard = () => {
                 type: 'mentor_response'
             });
 
+            showToast(`Request ${status} successfully.`, 'success');
+
         } catch (error) {
             console.error("Error updating mentorship request:", error);
-            alert("Failed to process request. Please try again.");
+            showToast("Failed to process request. Please try again.", 'error');
         }
     };
 
@@ -88,9 +104,10 @@ const MentorDashboard = () => {
                 leaveId: id,
                 type: 'leave_response'
             });
+            showToast(`Leave application ${status}.`, 'success');
         } catch (error) {
             console.error("Error updating leave status:", error);
-            alert("Failed to update leave status.");
+            showToast("Failed to update leave status.", 'error');
         }
     };
     
@@ -121,10 +138,10 @@ const MentorDashboard = () => {
             // 4. Commit all deletions atomically
             await batch.commit();
 
-            alert('Mentee removed successfully.');
+            showToast('Mentee removed successfully.', 'success');
         } catch (error) {
             console.error("Error removing mentee: ", error);
-            alert('Failed to remove mentee.');
+            showToast('Failed to remove mentee.', 'error');
         } finally {
             setMenteeToRemove(null);
         }
@@ -134,7 +151,7 @@ const MentorDashboard = () => {
     const acceptedRequests = useMemo(() => requests.filter(r => r.status === 'accepted'), [requests]);
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-8 relative">
             {/* View Switcher Tabs */}
             <div className="flex border-b border-slate-700 flex-wrap">
                 <button onClick={() => setActiveView('requests')} className={`px-4 py-2 font-semibold ${activeView === 'requests' ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-400'}`}>Mentee Requests ({pendingRequests.length})</button>
@@ -266,6 +283,30 @@ const MentorDashboard = () => {
                     </motion.div>
                 </div>
             )}
+
+            {/* --- CUSTOM TOAST NOTIFICATION --- */}
+            <AnimatePresence>
+                {toast && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 50, scale: 0.9 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                        className={`fixed bottom-8 right-8 z-[100] flex items-center gap-3 px-5 py-4 rounded-xl shadow-2xl border backdrop-blur-md ${
+                            toast.type === 'error' 
+                                ? 'bg-red-950/80 border-red-500/30 text-red-200' 
+                                : 'bg-emerald-950/80 border-emerald-500/30 text-emerald-200'
+                        }`}
+                    >
+                        <div className={`p-1 rounded-full ${toast.type === 'error' ? 'bg-red-500/20' : 'bg-emerald-500/20'}`}>
+                            {toast.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle size={20} />}
+                        </div>
+                        <span className="font-medium text-sm pr-2">{toast.message}</span>
+                        <button onClick={() => setToast(null)} className="opacity-60 hover:opacity-100 transition-opacity">
+                            <X size={16} />
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 };

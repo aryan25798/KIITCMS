@@ -1,15 +1,22 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
-import { firebaseConfig } from '../config'; // Import the config from the separate file
+import { firebaseConfig } from '../config'; 
 
-// Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
-// Initialize and export each service, ensuring they are all connected to the same app instance.
+// Initialize Auth
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// ✅ FIX: Use initializeFirestore with experimentalForceLongPolling to prevent connection drops
+export const db = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+    }),
+    experimentalForceLongPolling: true, // <--- This fixes the "ERR_CONNECTION_CLOSED"
+});
+
 export const storage = getStorage(app);
-export const functions = getFunctions(app, 'us-central1'); // Ensure your function's region is correct
+export const functions = getFunctions(app, 'us-central1');

@@ -21,10 +21,19 @@ export const AuthProvider = ({ children }) => {
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             if (currentUser) {
                 try {
-                    // 1. Force a token refresh to ensure the SDK has the latest Custom Claims.
-                    // This is CRITICAL. Without this, the 'admin' or 'department' claim won't be seen until the next login session.
-                    const tokenResult = await currentUser.getIdTokenResult(true);
-                    const claims = tokenResult.claims;
+                    // 1. OPTIMIZED TOKEN REFRESH
+                    // Default to cached token for performance (fast startup).
+                    let tokenResult = await currentUser.getIdTokenResult();
+                    let claims = tokenResult.claims;
+
+                    // "When it should be there" Check:
+                    // If it's a System Email (@system.com) but the 'department' claim is missing,
+                    // we FORCE a refresh because we know they *should* have it.
+                    if (currentUser.email?.endsWith('@system.com') && !claims.department) {
+                        console.log("🔄 System user detected with stale claims. Forcing token refresh...");
+                        tokenResult = await currentUser.getIdTokenResult(true);
+                        claims = tokenResult.claims;
+                    }
 
                     // --- DIAGNOSTIC LOG (CHECK CONSOLE) ---
                     console.log("🔍 FRONTEND CLAIMS CHECK:", claims);

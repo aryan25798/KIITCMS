@@ -1,38 +1,26 @@
-import React, { useState, useEffect, Suspense, useRef } from 'react';
+import React, { useState, useMemo, Suspense, useRef } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext'; //
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions'; 
-import { db, auth, functions } from '../services/firebase'; //
+import { useAuth } from '../context/AuthContext';
+import { httpsCallable } from 'firebase/functions';
+import { auth, functions } from '../services/firebase';
 
 // Components
-import Sidebar from '../components/layout/Sidebar'; //
-import NotificationBell from '../components/layout/NotificationBell'; //
-import ConfirmModal from '../components/ui/ConfirmModal'; //
-import FloatingBotButton from '../components/ui/FloatingBotButton'; //
+import Sidebar from '../components/layout/Sidebar';
+import NotificationBell from '../components/layout/NotificationBell';
+import ConfirmModal from '../components/ui/ConfirmModal';
+import FloatingBotButton from '../components/ui/FloatingBotButton';
 
 // Feature Modals & Widgets
-import MentorChatModal from '../features/mentorship/MentorChatModal'; //
-import LostAndFoundChatModal from '../features/lostAndFound/LostAndFoundChatModal'; //
-import MarketplaceChatModal from '../features/marketplace/MarketplaceChatModal'; //
-import StudentChatWidget from '../features/chat/StudentChatWidget'; //
-import VirtualAssistantChatbot from '../features/chat/VirtualAssistantChatbot'; //
+import MentorChatModal from '../features/mentorship/MentorChatModal';
+import LostAndFoundChatModal from '../features/lostAndFound/LostAndFoundChatModal';
+import MarketplaceChatModal from '../features/marketplace/MarketplaceChatModal';
+import StudentChatWidget from '../features/chat/StudentChatWidget';
+import VirtualAssistantChatbot from '../features/chat/VirtualAssistantChatbot';
 
 // Icons & Graphics
 import { Menu, AlertTriangle, Loader2 } from 'lucide-react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Stars } from '@react-three/drei';
-
-// --- CONFIGURATION ---
-// IMPORTANT: These values must match the 'assignedDept' field in your Firestore 'complaints' collection EXACTLY.
-const DEPT_MAPPING = {
-    'it': 'IT Department',
-    'maintenance': 'Maintenance',
-    'hostel': 'Hostel Affairs',
-    'academics': 'Academics',
-    'library': 'Library',
-    'admin': 'Admin' 
-};
 
 // --- OPTIMIZED BACKGROUND COMPONENT ---
 const ThreeDBackground = () => {
@@ -55,10 +43,6 @@ const DashboardPage = () => {
     const [activeMentorChat, setActiveMentorChat] = useState(null);
     const [activeLostAndFoundChat, setActiveLostAndFoundChat] = useState(null);
     const [activeMarketplaceChat, setActiveMarketplaceChat] = useState(null);
-
-    // Data States
-    const [complaints, setComplaints] = useState([]);
-    const [complaintsLoading, setComplaintsLoading] = useState(true);
 
     // SOS Modal State
     const [sosModal, setSosModal] = useState({
@@ -160,81 +144,20 @@ const DashboardPage = () => {
         }
     };
 
-    // --- DATA FETCHING (STRICT FILTERING) ---
-    useEffect(() => {
-        if (loading || !user) return; 
-        
-        // Mentors generally have a different dashboard flow
-        if (role === 'mentor') {
-            setComplaintsLoading(false);
-            return;
-        }
-
-        const baseQuery = collection(db, 'complaints');
-        let q;
-
-        try {
-            if (role === 'admin') {
-                // Admin sees ALL complaints, newest first
-                q = query(baseQuery, orderBy('createdAt', 'desc'));
-            } 
-            else if (role === 'department') {
-                // 1. Extract department prefix from email (e.g., 'it' from 'it@system.com')
-                const emailPrefix = user.email.split('@')[0].toLowerCase();
-                
-                // 2. Map to the specific database string
-                const targetDept = DEPT_MAPPING[emailPrefix];
-
-                if (targetDept) {
-                    console.log(`🔍 Department Login Detected: Filtering for '${targetDept}'`);
-                    // 3. Strict Filter Query
-                    q = query(baseQuery, where('assignedDept', '==', targetDept), orderBy('createdAt', 'desc'));
-                } else {
-                    console.warn(`⚠️ Unknown department email prefix: ${emailPrefix}. Showing no complaints.`);
-                    // Safe fallback: Query for something that won't exist to return empty list
-                    q = query(baseQuery, where('assignedDept', '==', 'NON_EXISTENT'));
-                }
-            } 
-            else {
-                // Students only see THEIR OWN complaints
-                q = query(baseQuery, where('userId', '==', user.uid), orderBy('createdAt', 'desc'));
-            }
-
-            const unsubscribe = onSnapshot(q, (snapshot) => {
-                let fetchedComplaints = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setComplaints(fetchedComplaints);
-                setComplaintsLoading(false);
-            }, (error) => {
-                console.error("Error fetching complaints:", error);
-                // Handle permission errors gracefully (often due to missing indexes or rules)
-                if (error.code === 'permission-denied') {
-                    console.error("Check Firestore Security Rules! The query must match the allow rule.");
-                }
-                setComplaintsLoading(false);
-            });
-
-            return () => unsubscribe();
-
-        } catch (err) {
-            console.error("Error constructing query:", err);
-            setComplaintsLoading(false);
-        }
-
-    }, [user, role, loading]); 
-
     const userName = !loading && user ? (user.displayName || user.email.split('@')[0]) : '...';
 
-    const contextValue = { 
+    // ✅ FIXED: Context is now memoized and clean.
+    // I REMOVED the 'complaints' state and fetching logic from this file.
+    // This stops the Dashboard from re-rendering constantly and lets ComplaintList handle its own data.
+    const contextValue = useMemo(() => ({ 
         user, 
         role, 
         mentorData, 
         setMentorData,
-        complaints,
-        complaintsLoading,
         onChat: setActiveMentorChat,
         setActiveMarketplaceChat, 
         setActiveLostAndFoundChat 
-    };
+    }), [user, role, mentorData]);
 
     if (loading) {
         return (

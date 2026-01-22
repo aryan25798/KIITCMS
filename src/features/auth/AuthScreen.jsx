@@ -9,7 +9,7 @@ import {
     setPersistence,
     browserSessionPersistence
 } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../services/firebase';
 import { createNotification } from '../../services/notifications';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -97,7 +97,7 @@ const AuthScreen = () => {
                 const user = userCredential.user;
                 await updateProfile(user, { displayName: name });
 
-                // 2. Handle Role Specific Logic (Cloud Function handles Department now)
+                // 2. Handle Role Specific Logic
                 if (loginMode === 'student') {
                     // Client-side DB creation is okay for students (they default to pending)
                     const userDocRef = doc(db, "users", user.uid);
@@ -134,16 +134,39 @@ const AuthScreen = () => {
                     });
 
                 } else if (loginMode === 'department') {
-                    // --- CLOUD FUNCTION HANDOFF ---
-                    // We DO NOT write to Firestore here.
+                    // --- CLOUD FUNCTION HANDOFF (FIXED) ---
                     // The Cloud Function 'processNewUser' in functions/index.js 
                     // detects the @system.com email and creates the 'department' doc + claim.
                     
-                    console.log("Department signup detected. Waiting for Cloud Function...");
+                    console.log("Department signup detected. Waiting for Cloud Function provisioning...");
                     
-                    // Small delay to allow Cloud Function to process the new user 
-                    // before the AuthContext refreshes the token.
-                    await new Promise(r => setTimeout(r, 2000));
+                    // Robust: Wait for the Cloud Function to actually write the data
+                    await new Promise((resolve, reject) => {
+                        const userDocRef = doc(db, "users", user.uid);
+                        
+                        const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+                            if (docSnap.exists()) {
+                                const userData = docSnap.data();
+                                // Once the role is updated to 'department', we know provisioning is complete
+                                if (userData.role === 'department' || userData.departmentName) {
+                                    console.log("✅ Cloud Function completed. User provisioned.");
+                                    unsubscribe();
+                                    resolve();
+                                }
+                            }
+                        }, (err) => {
+                            console.warn("Snapshot listener warning:", err);
+                            // We don't reject immediately to allow for network retries
+                        });
+
+                        // Safety Timeout: If Cloud Function hangs, resolve anyway after 15s 
+                        // so the user isn't stuck on a spinner forever.
+                        setTimeout(() => {
+                            unsubscribe();
+                            console.warn("Provisioning check timed out. Proceeding...");
+                            resolve(); 
+                        }, 15000); 
+                    });
 
                 } else {
                     // Only Admin is restricted from frontend signup
@@ -177,7 +200,7 @@ const AuthScreen = () => {
             console.error(err);
             let msg = 'Authentication failed.';
             if (err.code?.includes('invalid-email')) msg = 'Please enter a valid email.';
-            else if (err.code?.includes('user-not-found') || err.code?.includes('wrong-password')) msg = 'Invalid email or password.';
+            else if (err.code?.includes('user-not-found') || err.code?.includes('wrong-password') || err.code?.includes('invalid-credential')) msg = 'Invalid email or password.';
             else if (err.code?.includes('email-already-in-use')) msg = 'This email is already registered.';
             else if (err.message) msg = err.message;
             if (isMounted.current) setError(msg);
