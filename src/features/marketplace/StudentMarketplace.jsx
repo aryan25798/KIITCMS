@@ -20,10 +20,10 @@ const StudentMarketplace = () => {
 
     // Data State
     const [items, setItems] = useState([]);
-    const [sellerChats, setSellerChats] = useState([]);
-    const [buyerChats, setBuyerChats] = useState([]);
+    // We now use a single list for chats, as the query fetches all relevant ones
+    const [myChats, setMyChats] = useState([]); 
 
-    // Loading States (Separated for better UX)
+    // Loading States
     const [itemsLoading, setItemsLoading] = useState(true);
     const [chatsLoading, setChatsLoading] = useState(true);
 
@@ -48,64 +48,46 @@ const StudentMarketplace = () => {
             }
         );
 
-        // --- 2. Fetch User Chats (Parallel) ---
-        // We track both queries to determine when the "Chat Tab" is fully ready.
-        let sellerLoaded = false;
-        let buyerLoaded = false;
+        // --- 2. Fetch User Chats (FIXED) ---
+        // Instead of splitting Buyer vs Seller queries (which causes permission errors),
+        // we query the 'participants' array. This matches the new Security Rules.
+        if (user?.uid) {
+            const chatsQuery = query(
+                collection(db, 'marketplaceChats'), 
+                where('participants', 'array-contains', user.uid)
+            );
 
-        const checkChatsLoaded = () => {
-            if (sellerLoaded && buyerLoaded) setChatsLoading(false);
-        };
+            const unsubscribeChats = onSnapshot(chatsQuery, 
+                (snapshot) => {
+                    const chatsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    
+                    // Sort locally by last message time (descending)
+                    chatsData.sort((a, b) => 
+                        (b.lastMessageTimestamp?.toDate() || 0) - (a.lastMessageTimestamp?.toDate() || 0)
+                    );
+                    
+                    setMyChats(chatsData);
+                    setChatsLoading(false);
+                },
+                (err) => {
+                    console.error("Error fetching chats:", err);
+                    // We don't set a global error here to allow the Item Browser to still work
+                    setChatsLoading(false);
+                }
+            );
 
-        const sellerChatsQuery = query(collection(db, 'marketplaceChats'), where('sellerId', '==', user.uid));
-        const unsubSeller = onSnapshot(sellerChatsQuery, 
-            (snapshot) => {
-                const chatsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setSellerChats(chatsData);
-                sellerLoaded = true;
-                checkChatsLoaded();
-            },
-            (err) => {
-                console.error("Error fetching seller chats:", err);
-                // Even if error, we stop loading to prevent infinite spinner
-                sellerLoaded = true; 
-                checkChatsLoaded();
-            }
-        );
-        
-        const buyerChatsQuery = query(collection(db, 'marketplaceChats'), where('buyerId', '==', user.uid));
-        const unsubBuyer = onSnapshot(buyerChatsQuery, 
-            (snapshot) => {
-                const chatsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setBuyerChats(chatsData);
-                buyerLoaded = true;
-                checkChatsLoaded();
-            },
-            (err) => {
-                console.error("Error fetching buyer chats:", err);
-                buyerLoaded = true;
-                checkChatsLoaded();
-            }
-        );
-
-        return () => {
-            unsubscribeItems();
-            unsubSeller();
-            unsubBuyer();
-        };
+            return () => {
+                unsubscribeItems();
+                unsubscribeChats();
+            };
+        } else {
+            // Should not happen if guarded by AuthContext, but safe fallback
+            return () => {
+                unsubscribeItems();
+            };
+        }
     }, [user.uid]);
     
-    // Combine and sort chats
-    const chats = useMemo(() => {
-        const allChats = [...sellerChats, ...buyerChats];
-        // Remove duplicates (in case of rare race conditions or self-chats)
-        const uniqueChats = Array.from(new Map(allChats.map(chat => [chat.id, chat])).values());
-        
-        return uniqueChats.sort((a, b) => 
-            (b.lastMessageTimestamp?.toDate() || 0) - (a.lastMessageTimestamp?.toDate() || 0)
-        );
-    }, [sellerChats, buyerChats]);
-
     // Client-side filtering (Efficient for <1000 items)
     const filteredItems = useMemo(() => {
         return items
@@ -165,7 +147,7 @@ const StudentMarketplace = () => {
                 </button>
                 <button onClick={() => setActiveTab('chats')} className={`flex-1 py-2 text-sm font-semibold rounded-md transition-colors relative ${activeTab === 'chats' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800'}`}>
                     My Chats
-                    {chats.length > 0 && <span className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center animate-pulse">{chats.length}</span>}
+                    {myChats.length > 0 && <span className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center animate-pulse">{myChats.length}</span>}
                 </button>
             </div>
             
@@ -183,42 +165,54 @@ const StudentMarketplace = () => {
                         <div className="max-w-4xl mx-auto">
                             <h3 className="text-2xl font-bold text-white mb-4">Your Conversations</h3>
                             
-                            {/* Uses specific Chat Loading State */}
+                            {/* Chats List */}
                             {chatsLoading ? (
                                 <div className="flex justify-center p-8"><Spinner size="h-10 w-10" color="border-cyan-400" /></div>
-                            ) : chats.length > 0 ? (
+                            ) : myChats.length > 0 ? (
                                 <div className="space-y-4">
-                                    {chats.map(chat => {
+                                    {myChats.map(chat => {
+                                        // Determine role logic locally
                                         const isSeller = chat.sellerId === user.uid;
+                                        
+                                        // Construct the "Other User" object for the UI
                                         const otherUser = {
                                             uid: isSeller ? chat.buyerId : chat.sellerId,
                                             name: isSeller ? chat.buyerName : chat.sellerName,
                                             email: isSeller ? chat.buyerEmail : chat.sellerEmail,
                                         };
-                                        const item = items.find(i => i.id === chat.itemId);
                                         
-                                        // Gracefully handle deleted items
-                                        if (!item) return (
-                                            <div key={chat.id} className="bg-slate-800/30 p-4 rounded-lg border border-slate-700/30 text-slate-500 italic">
-                                                Item unavailable (Deleted)
-                                            </div>
-                                        );
-
+                                        // Try to find live item data from our items list
+                                        // If the item was deleted, fallback to the snapshot data saved in the chat
+                                        const item = items.find(i => i.id === chat.itemId) || { title: chat.itemName || "Unknown Item (Deleted)" };
+                                        
                                         return (
                                             <motion.div 
                                                 key={chat.id} 
                                                 initial={{ opacity: 0, x: -20 }}
                                                 animate={{ opacity: 1, x: 0 }}
-                                                className="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
+                                                className="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-cyan-500/30 transition-colors"
                                             >
                                                 <div>
-                                                    <p className="font-bold text-white">Chat about: {item.title}</p>
-                                                    <p className="text-sm text-slate-400">
-                                                        {isSeller ? `With Buyer: ${otherUser.name || 'N/A'}` : `With Seller: ${otherUser.name || 'N/A'}`}
+                                                    <p className="font-bold text-white flex items-center gap-2">
+                                                        {item.title}
+                                                        <span className={`text-xs px-2 py-0.5 rounded-full ${isSeller ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                                                            {isSeller ? 'Selling' : 'Buying'}
+                                                        </span>
                                                     </p>
+                                                    <p className="text-sm text-slate-400">
+                                                        Chatting with: <span className="text-slate-200">{otherUser.name || 'User'}</span>
+                                                    </p>
+                                                    {chat.lastMessage && (
+                                                        <p className="text-xs text-slate-500 mt-1 italic truncate max-w-xs">"{chat.lastMessage}"</p>
+                                                    )}
                                                 </div>
                                                 <button 
-                                                    onClick={() => setActiveMarketplaceChat({ item, chatWith: otherUser })}
+                                                    // Pass the combined data to the chat modal context
+                                                    onClick={() => setActiveMarketplaceChat({ 
+                                                        item: { ...item, id: chat.itemId }, // Ensure ID is passed
+                                                        chatWith: otherUser, 
+                                                        chatId: chat.id 
+                                                    })}
                                                     className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white font-semibold rounded-lg hover:bg-cyan-700 transition-colors w-full sm:w-auto justify-center"
                                                 >
                                                     <MessageSquare size={18}/> Open Chat
@@ -246,7 +240,7 @@ const StudentMarketplace = () => {
                                 </select>
                             </div>
 
-                            {/* Uses specific Items Loading State */}
+                            {/* Items List */}
                             {itemsLoading ? (
                                 <div className="flex justify-center p-8"><Spinner size="h-10 w-10" color="border-cyan-400" /></div>
                             ) : filteredItems.length > 0 ? (
