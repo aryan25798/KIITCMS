@@ -1,6 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
-// ✅ FIX: Use the explicit v1 sub-package for Auth triggers
 const authTrigger = require("firebase-functions/v1/auth"); 
 const admin = require("firebase-admin");
 
@@ -165,7 +164,7 @@ exports.sendEmergencyAlert = onCall(async (request) => {
 
 
 // ==================================================================
-// 4. ADMIN: DELETE USER (Gen 2)
+// 4. ADMIN: DELETE USER (Gen 2 - WITH DEEP CLEANUP)
 // ==================================================================
 exports.deleteUserAccount = onCall(async (request) => {
     if (!request.auth) {
@@ -186,16 +185,43 @@ exports.deleteUserAccount = onCall(async (request) => {
         throw new HttpsError("invalid-argument", "Target UID is required.");
     }
 
+    // Default to 'users' if not provided, but frontend should provide 'mentors' for mentors.
+    const coll = collectionName || 'users';
+
     try {
+        // 1. Delete from Authentication
         await admin.auth().deleteUser(targetUid);
-        const coll = collectionName || 'users';
+        
+        // 2. Delete Main Profile Document
         await admin.firestore().collection(coll).doc(targetUid).delete();
-        return { success: true, message: "User completely removed from system." };
+
+        // 3. ✅ DEEP CLEANUP: If it's a Mentor, delete related data
+        if (coll === 'mentors') {
+            const db = admin.firestore();
+            const batch = db.batch();
+
+            // A. Delete pending requests sent TO this mentor
+            const requestsQuery = await db.collection('mentorRequests').where('mentorId', '==', targetUid).get();
+            requestsQuery.forEach(doc => batch.delete(doc.ref));
+
+            // B. Delete active connections with students
+            // Note: This is harder as studentConnections ID is the STUDENT ID.
+            // We search for connections where this mentor is the assigned mentor.
+            const connectionsQuery = await db.collection('studentConnections').where('mentorId', '==', targetUid).get();
+            connectionsQuery.forEach(doc => batch.delete(doc.ref));
+
+            // C. Commit Batch
+            await batch.commit();
+            console.log(`🧹 Deep cleaned data for mentor ${targetUid}`);
+        }
+
+        return { success: true, message: "User and all related data removed." };
     } catch (error) {
+        // If Auth user is already gone, just clean up Firestore
         if (error.code === 'auth/user-not-found') {
             const coll = collectionName || 'users';
             await admin.firestore().collection(coll).doc(targetUid).delete();
-            return { success: true, message: "User profile cleaned up." };
+            return { success: true, message: "User profile cleaned up (Auth was already missing)." };
         }
         throw new HttpsError("internal", "Failed to delete user: " + error.message);
     }
@@ -203,7 +229,7 @@ exports.deleteUserAccount = onCall(async (request) => {
 
 
 // ==================================================================
-// 5. ADMIN: UPDATE STATUS (Gen 2 - UPDATED FOR SECURITY APPROVAL)
+// 5. ADMIN: UPDATE STATUS (Gen 2 - DYNAMIC COLLECTION SUPPORT)
 // ==================================================================
 exports.updateUserStatus = onCall(async (request) => {
     // 1. Auth Checks
@@ -252,7 +278,11 @@ exports.updateUserStatus = onCall(async (request) => {
                     console.log(`🚫 Revoked Claims for ${targetUid}`);
                 }
             }
-        }
+        } 
+        
+        // Mentors don't strictly need Custom Claims for basic access (Firestore Rules handle it),
+        // but if you wanted to add a 'mentor' claim in the future, you would add an 
+        // `else if (coll === 'mentors')` block here.
 
         return { success: true, message: `User status updated to ${status}` };
     } catch (error) {
@@ -268,6 +298,7 @@ exports.processNewUser = authTrigger.user().onCreate(async (user) => {
     const email = user.email || '';
     const uid = user.uid;
 
+    // Only process system emails. Regular students/mentors are handled by client-side signup flow.
     if (email.endsWith('@system.com')) {
         try {
             // ✅ CHANGE: Do NOT set custom claims yet.
