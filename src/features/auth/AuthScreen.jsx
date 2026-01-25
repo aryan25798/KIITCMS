@@ -13,60 +13,64 @@ import { doc, setDoc, serverTimestamp, getDoc, onSnapshot } from 'firebase/fires
 import { auth, db } from '../../services/firebase';
 import { createNotification } from '../../services/notifications';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-    Mail, 
-    Lock, 
-    User, 
-    AlertCircle, 
-    GraduationCap, 
-    Award, 
-    Building2, 
-    ShieldCheck, 
-    ArrowRight
+import {
+    Mail, Lock, User, AlertCircle, ArrowRight,
+    GraduationCap, Award, Building2, ShieldCheck,
+    Zap, Globe, ChevronRight, Terminal, Cpu, Scan, Wifi,
+    Activity, Server, Database, Code
 } from 'lucide-react';
 import Spinner from '../../components/ui/Spinner';
 
-// --- VISUAL ASSETS & CONFIG ---
+// --- GAMIFIED CONFIGURATION ---
 const ROLES = [
-    { id: 'student', label: 'Student', icon: GraduationCap },
-    { id: 'mentor', label: 'Mentor', icon: Award },
-    { id: 'department', label: 'Dept', icon: Building2 },
-    { id: 'admin', label: 'Admin', icon: ShieldCheck },
+    {
+        id: 'student',
+        label: 'Student',
+        icon: GraduationCap,
+        color: 'from-cyan-400 to-blue-600',
+        hex: '#22d3ee',
+        shadow: 'shadow-cyan-500/50',
+        tagline: 'Learning Protocol',
+        desc: 'Access neural knowledge base and track progress.',
+        visualType: 'matrix'
+    },
+    {
+        id: 'mentor',
+        label: 'Mentor',
+        icon: Award,
+        color: 'from-emerald-400 to-teal-600',
+        hex: '#34d399',
+        shadow: 'shadow-emerald-500/50',
+        tagline: 'Guidance System',
+        desc: 'Shape future nodes and validate credentials.',
+        visualType: 'network'
+    },
+    {
+        id: 'department',
+        label: 'Dept.',
+        icon: Building2,
+        color: 'from-violet-400 to-purple-600',
+        hex: '#a78bfa',
+        shadow: 'shadow-violet-500/50',
+        tagline: 'Sector Control',
+        desc: 'Manage infrastructure and resource allocation.',
+        visualType: 'grid'
+    },
+    {
+        id: 'admin',
+        label: 'Admin',
+        icon: ShieldCheck,
+        color: 'from-rose-400 to-red-600',
+        hex: '#fb7185',
+        shadow: 'shadow-rose-500/50',
+        tagline: 'Core Access',
+        desc: 'Oversee global system parameters and security.',
+        visualType: 'shield'
+    },
 ];
 
-const THEMES = {
-    student: { 
-        gradient: 'from-cyan-500 to-blue-600', 
-        shadow: 'shadow-cyan-500/20', 
-        text: 'text-cyan-400', 
-        bg: 'bg-cyan-500',
-        border: 'focus:border-cyan-400'
-    },
-    mentor: { 
-        gradient: 'from-emerald-500 to-teal-600', 
-        shadow: 'shadow-emerald-500/20', 
-        text: 'text-emerald-400', 
-        bg: 'bg-emerald-500',
-        border: 'focus:border-emerald-400'
-    },
-    department: { 
-        gradient: 'from-violet-500 to-purple-600', 
-        shadow: 'shadow-violet-500/20', 
-        text: 'text-violet-400', 
-        bg: 'bg-violet-500',
-        border: 'focus:border-violet-400'
-    },
-    admin: { 
-        gradient: 'from-rose-500 to-orange-600', 
-        shadow: 'shadow-rose-500/20', 
-        text: 'text-rose-400', 
-        bg: 'bg-rose-500',
-        border: 'focus:border-rose-400'
-    },
-};
-
 const AuthScreen = () => {
-    // --- STATE ---
+    // --- LOGIC STATE ---
     const [loginMode, setLoginMode] = useState('student');
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState('');
@@ -75,8 +79,11 @@ const AuthScreen = () => {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
+    // UI State
+    const [focusedField, setFocusedField] = useState(null);
     const isMounted = useRef(true);
-    const activeTheme = useMemo(() => THEMES[loginMode], [loginMode]);
+
+    const activeRole = useMemo(() => ROLES.find(r => r.id === loginMode), [loginMode]);
 
     useEffect(() => {
         isMounted.current = true;
@@ -87,46 +94,38 @@ const AuthScreen = () => {
     const handleAuthAction = async (action) => {
         setLoading(true);
         setError('');
-        
+
         try {
             await setPersistence(auth, browserSessionPersistence);
 
             if (action === 'signup') {
-                // 1. Create Authentication User
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
                 const user = userCredential.user;
                 await updateProfile(user, { displayName: name });
 
-                // 2. Handle Role Specific Logic
                 if (loginMode === 'student') {
-                    // Client-side DB creation is okay for students (they default to pending)
                     const userDocRef = doc(db, "users", user.uid);
                     await setDoc(userDocRef, {
                         uid: user.uid,
                         email: user.email,
                         displayName: name,
                         role: loginMode,
-                        status: 'pending', 
+                        status: 'pending',
                         createdAt: serverTimestamp()
                     });
-                    
-                    // Students still get email verification
                     await sendEmailVerification(user);
 
                 } else if (loginMode === 'mentor') {
-                    // Mentors have their own collection
                     await setDoc(doc(db, "mentors", user.uid), {
-                        uid: user.uid, 
-                        name: name, 
-                        email: user.email, 
-                        status: "pending", 
+                        uid: user.uid,
+                        name: name,
+                        email: user.email,
+                        status: "pending",
                         bio: "",
-                        expertise: [], 
-                        profilePicture: "", 
+                        expertise: [],
+                        profilePicture: "",
                         createdAt: serverTimestamp()
                     });
-                    
-                    // Notify Admins
                     await createNotification({
                         recipientRole: 'admin',
                         message: `New mentor registration: ${name}`,
@@ -134,64 +133,44 @@ const AuthScreen = () => {
                     });
 
                 } else if (loginMode === 'department') {
-                    // --- CLOUD FUNCTION HANDOFF (FIXED) ---
-                    // The Cloud Function 'processNewUser' in functions/index.js 
-                    // detects the @system.com email and creates the 'department' doc + claim.
-                    
-                    console.log("Department signup detected. Waiting for Cloud Function provisioning...");
-                    
-                    // Robust: Wait for the Cloud Function to actually write the data
-                    await new Promise((resolve, reject) => {
+                    await new Promise((resolve) => {
                         const userDocRef = doc(db, "users", user.uid);
-                        
                         const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
                             if (docSnap.exists()) {
                                 const userData = docSnap.data();
-                                // Once the role is updated to 'department', we know provisioning is complete
                                 if (userData.role === 'department' || userData.departmentName) {
-                                    console.log("✅ Cloud Function completed. User provisioned.");
                                     unsubscribe();
                                     resolve();
                                 }
                             }
-                        }, (err) => {
-                            console.warn("Snapshot listener warning:", err);
-                            // We don't reject immediately to allow for network retries
                         });
-
-                        // Safety Timeout: If Cloud Function hangs, resolve anyway after 15s 
-                        // so the user isn't stuck on a spinner forever.
                         setTimeout(() => {
                             unsubscribe();
-                            console.warn("Provisioning check timed out. Proceeding...");
-                            resolve(); 
-                        }, 15000); 
+                            if (isMounted.current) resolve();
+                        }, 15000);
                     });
 
                 } else {
-                    // Only Admin is restricted from frontend signup
                     setError('Restricted access. Admins must be set via console.');
                 }
 
             } else if (action === 'login') {
                 await signInWithEmailAndPassword(auth, email, password);
-            
+
             } else if (action === 'google') {
                 if (loginMode !== 'student') throw new Error('Google sign-in is for students only.');
                 const provider = new GoogleAuthProvider();
                 const cred = await signInWithPopup(auth, provider);
-                
-                // Check & Create User Doc if missing
                 const userRef = doc(db, "users", cred.user.uid);
                 const snap = await getDoc(userRef);
-                
+
                 if (!snap.exists()) {
                     await setDoc(userRef, {
                         uid: cred.user.uid,
                         email: cred.user.email,
                         displayName: cred.user.displayName,
                         role: 'student',
-                        status: 'pending', // <--- Ensure Google signups are also pending
+                        status: 'pending',
                         createdAt: serverTimestamp()
                     });
                 }
@@ -199,9 +178,10 @@ const AuthScreen = () => {
         } catch (err) {
             console.error(err);
             let msg = 'Authentication failed.';
-            if (err.code?.includes('invalid-email')) msg = 'Please enter a valid email.';
-            else if (err.code?.includes('user-not-found') || err.code?.includes('wrong-password') || err.code?.includes('invalid-credential')) msg = 'Invalid email or password.';
-            else if (err.code?.includes('email-already-in-use')) msg = 'This email is already registered.';
+            if (err.code?.includes('popup-closed-by-user')) msg = 'Operation cancelled.';
+            else if (err.code?.includes('invalid-email')) msg = 'Invalid comms link format.';
+            else if (err.code?.includes('user-not-found') || err.code?.includes('wrong-password')) msg = 'Credentials rejected.';
+            else if (err.code?.includes('email-already-in-use')) msg = 'Identity already registered.';
             else if (err.message) msg = err.message;
             if (isMounted.current) setError(msg);
         } finally {
@@ -209,237 +189,434 @@ const AuthScreen = () => {
         }
     };
 
-    // --- ANIMATION VARIANTS ---
-    const pageVariants = {
-        initial: { opacity: 0, scale: 0.95 },
-        animate: { opacity: 1, scale: 1, transition: { duration: 0.5, ease: "easeOut" } },
-        exit: { opacity: 0, scale: 0.95 }
-    };
+    // --- SUB-COMPONENTS ---
 
-    const contentVariants = {
-        hidden: { opacity: 0, x: 20 },
-        visible: { opacity: 1, x: 0, transition: { duration: 0.3 } },
-        exit: { opacity: 0, x: -20, transition: { duration: 0.2 } }
+    const CornerBrackets = ({ color }) => (
+        <div className="absolute inset-0 pointer-events-none z-0">
+            <div className="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 transition-colors duration-500" style={{ borderColor: color }}></div>
+            <div className="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 transition-colors duration-500" style={{ borderColor: color }}></div>
+            <div className="absolute bottom-0 left-0 w-8 h-8 border-b-2 border-l-2 transition-colors duration-500" style={{ borderColor: color }}></div>
+            <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 transition-colors duration-500" style={{ borderColor: color }}></div>
+        </div>
+    );
+
+    const TechInput = ({ icon: Icon, type, value, onChange, placeholder, fieldName }) => (
+        <div className="relative group">
+            <div className={`absolute inset-0 bg-gradient-to-r ${activeRole.color} opacity-0 group-focus-within:opacity-20 transition-opacity duration-500 blur-xl rounded-lg`}></div>
+            <div className="relative flex items-center bg-black/40 border border-slate-800 backdrop-blur-md rounded-lg p-1 transition-all duration-300 group-focus-within:border-white/30 group-focus-within:shadow-[0_0_15px_rgba(255,255,255,0.1)]">
+                <div className="p-3 text-slate-500 group-focus-within:text-white transition-colors">
+                    <Icon size={18} />
+                </div>
+                <div className="h-6 w-[1px] bg-slate-800 group-focus-within:bg-slate-600 transition-colors mx-1"></div>
+                <input
+                    type={type}
+                    required
+                    value={value}
+                    onChange={onChange}
+                    onFocus={() => setFocusedField(fieldName)}
+                    onBlur={() => setFocusedField(null)}
+                    className="w-full bg-transparent border-none text-white placeholder-slate-600 focus:ring-0 px-4 py-3 outline-none font-mono text-sm tracking-wide"
+                    placeholder={placeholder}
+                />
+                {focusedField === fieldName && (
+                    <motion.div
+                        layoutId="inputScan"
+                        className={`absolute bottom-0 left-0 h-[2px] w-full bg-gradient-to-r ${activeRole.color}`}
+                        initial={{ scaleX: 0 }}
+                        animate={{ scaleX: 1 }}
+                        transition={{ duration: 0.3 }}
+                    />
+                )}
+            </div>
+        </div>
+    );
+
+    // Dynamic Background Visuals based on Role
+    const RoleVisuals = ({ type, color }) => {
+        return (
+            <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-20">
+                {type === 'matrix' && (
+                    <div className="flex justify-between px-10 h-full">
+                        {[...Array(10)].map((_, i) => (
+                            <motion.div
+                                key={i}
+                                initial={{ y: -100, opacity: 0 }}
+                                animate={{ y: '100vh', opacity: [0, 1, 0] }}
+                                transition={{ repeat: Infinity, duration: Math.random() * 3 + 2, delay: Math.random() * 2, ease: "linear" }}
+                                className="w-[1px] bg-gradient-to-b from-transparent via-cyan-500 to-transparent h-40"
+                            />
+                        ))}
+                    </div>
+                )}
+                {type === 'network' && (
+                    <div className="absolute inset-0">
+                        {[...Array(6)].map((_, i) => (
+                            <motion.div
+                                key={i}
+                                className="absolute rounded-full bg-emerald-500 blur-xl"
+                                style={{
+                                    width: Math.random() * 100 + 50,
+                                    height: Math.random() * 100 + 50,
+                                    left: `${Math.random() * 100}%`,
+                                    top: `${Math.random() * 100}%`,
+                                }}
+                                animate={{ scale: [1, 1.2, 1], opacity: [0.1, 0.3, 0.1] }}
+                                transition={{ repeat: Infinity, duration: 4, delay: i }}
+                            />
+                        ))}
+                    </div>
+                )}
+                {type === 'grid' && (
+                    <div className="absolute inset-0 bg-[linear-gradient(0deg,transparent_24%,rgba(167,139,250,0.1)_25%,rgba(167,139,250,0.1)_26%,transparent_27%,transparent_74%,rgba(167,139,250,0.1)_75%,rgba(167,139,250,0.1)_76%,transparent_77%,transparent),linear-gradient(90deg,transparent_24%,rgba(167,139,250,0.1)_25%,rgba(167,139,250,0.1)_26%,transparent_27%,transparent_74%,rgba(167,139,250,0.1)_75%,rgba(167,139,250,0.1)_76%,transparent_77%,transparent)] bg-[size:50px_50px]"></div>
+                )}
+                {type === 'shield' && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{ repeat: Infinity, duration: 20, ease: "linear" }}
+                            className="w-[500px] h-[500px] border border-rose-500/20 rounded-full border-dashed"
+                        />
+                         <motion.div
+                            animate={{ rotate: -360 }}
+                            transition={{ repeat: Infinity, duration: 15, ease: "linear" }}
+                            className="absolute w-[300px] h-[300px] border border-rose-500/30 rounded-full border-dotted"
+                        />
+                    </div>
+                )}
+            </div>
+        );
     };
 
     return (
-        <div className="relative min-h-screen w-full flex items-center justify-center p-4 bg-[#050B14] overflow-hidden selection:bg-white/20">
+        <div className="flex min-h-screen w-full overflow-hidden bg-[#050505] text-white font-sans selection:bg-white/20 relative">
             
-            {/* --- 1. DYNAMIC BACKGROUND --- */}
-            <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                {/* Aurora Blobs */}
+            {/* --- GLOBAL OVERLAYS --- */}
+            {/* CRT Scanline Effect */}
+            <div className="fixed inset-0 pointer-events-none z-50 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[size:100%_2px,3px_100%] opacity-20"></div>
+            {/* Vignette */}
+            <div className="fixed inset-0 pointer-events-none z-40 bg-[radial-gradient(circle_at_center,transparent_0%,black_100%)] opacity-80"></div>
+            
+            {/* --- ANIMATED BACKGROUND --- */}
+            <div className="absolute inset-0 z-0">
+                 {/* Moving Grid Floor */}
+                 <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:40px_40px] perspective-[500px] transform-style-3d"></div>
+                
+                {/* Active Role Ambient Glow */}
                 <motion.div 
-                    animate={{ rotate: 360, scale: [1, 1.1, 1] }}
-                    transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                    className={`absolute -top-[20%] -left-[10%] w-[800px] h-[800px] rounded-full mix-blend-screen filter blur-[100px] opacity-20 bg-gradient-to-r ${activeTheme.gradient}`}
+                    animate={{ 
+                        background: `radial-gradient(circle at 60% 50%, ${activeRole.hex}15 0%, transparent 70%)`,
+                    }}
+                    transition={{ duration: 1.5 }}
+                    className="absolute inset-0 pointer-events-none"
                 />
-                <motion.div 
-                    animate={{ rotate: -360, scale: [1, 1.2, 1] }}
-                    transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-                    className="absolute -bottom-[20%] -right-[10%] w-[600px] h-[600px] rounded-full mix-blend-screen filter blur-[100px] opacity-10 bg-blue-600/30"
-                />
-                {/* Grid Overlay */}
-                <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-[0.03] bg-center"></div>
             </div>
 
-            {/* --- 2. GLASS CARD --- */}
-            <motion.div 
-                variants={pageVariants}
-                initial="initial"
-                animate="animate"
-                className="relative z-10 w-full max-w-[1000px] h-[auto] md:h-[650px] flex flex-col md:flex-row rounded-3xl overflow-hidden shadow-2xl border border-white/10 bg-slate-900/40 backdrop-blur-xl"
-            >
-                
-                {/* LEFT SIDE: BRANDING (Hidden on Mobile) */}
-                <div className="hidden md:flex w-5/12 flex-col justify-between p-10 relative overflow-hidden">
-                    <div className={`absolute inset-0 opacity-20 bg-gradient-to-br ${activeTheme.gradient}`}></div>
-                    <div className="relative z-10">
-                        <div className="flex items-center gap-3 mb-10">
-                            <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center backdrop-blur-sm border border-white/20">
-                                <span className="font-bold text-white text-xl">K</span>
-                            </div>
-                            <span className="text-xl font-bold tracking-wide text-white">Smart Portal</span>
-                        </div>
-                        <h1 className="text-4xl font-bold text-white leading-tight">
-                            Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-white to-white/60">Gateway</span> to Academic Excellence.
-                        </h1>
-                    </div>
-                    
-                    {/* Testimonial / Stat */}
-                    <div className="relative z-10 bg-black/20 backdrop-blur-md p-6 rounded-2xl border border-white/5">
-                        <p className="text-slate-300 text-sm leading-relaxed italic">
-                            "A unified platform connecting students, mentors, and administration seamlessly."
-                        </p>
-                        <div className="mt-4 flex items-center gap-3">
-                            <div className="flex -space-x-2">
-                                {[1,2,3].map(i => <div key={i} className="w-8 h-8 rounded-full bg-slate-700 border-2 border-slate-800" />)}
-                            </div>
-                            <span className="text-xs text-slate-400 font-medium">Joined by 10k+ users</span>
-                        </div>
-                    </div>
-                </div>
+            {/* --- MAIN CONTENT CONTAINER --- */}
+            <div className="relative z-10 flex flex-col lg:flex-row w-full h-full min-h-screen max-w-[1920px] mx-auto">
 
-                {/* RIGHT SIDE: AUTH FORM */}
-                <div className="w-full md:w-7/12 p-6 sm:p-10 md:p-12 bg-slate-900/60 flex flex-col justify-center relative">
-                    
-                    {/* Role Selector Tabs */}
-                    <div className="flex justify-between items-center bg-slate-950/50 p-1.5 rounded-2xl border border-white/5 mb-8 overflow-x-auto no-scrollbar">
-                        {ROLES.map((role) => {
-                            const Icon = role.icon;
-                            const isActive = loginMode === role.id;
-                            return (
-                                <button
-                                    key={role.id}
-                                    onClick={() => { setLoginMode(role.id); setIsLogin(true); setError(''); }}
-                                    className={`relative flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 min-w-[90px] justify-center ${isActive ? 'text-white' : 'text-slate-500 hover:text-slate-300'}`}
-                                >
-                                    {isActive && (
-                                        <motion.div 
-                                            layoutId="activeRole"
-                                            className={`absolute inset-0 rounded-xl bg-gradient-to-r ${activeTheme.gradient} opacity-100 shadow-lg ${activeTheme.shadow}`}
-                                        />
-                                    )}
-                                    <span className="relative z-10 flex items-center gap-2">
-                                        <Icon size={16} />
-                                        <span>{role.label}</span>
+                {/* === LEFT PANEL: VISUAL IMMERSION (Desktop Only) === */}
+                <motion.div 
+                    className="hidden lg:flex lg:w-[45%] relative flex-col justify-between p-16 overflow-hidden border-r border-white/5 bg-black/40 backdrop-blur-sm"
+                    initial={{ opacity: 0, x: -50 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.8 }}
+                >
+                    {/* Role Specific Visual Background */}
+                    <RoleVisuals type={activeRole.visualType} />
+
+                    {/* Top Tech Header */}
+                    <div className="relative z-10 flex justify-between items-start">
+                        <div className="flex items-center gap-4">
+                            <div className="relative group cursor-pointer">
+                                <div className={`absolute inset-0 bg-gradient-to-r ${activeRole.color} blur-md opacity-50 group-hover:opacity-100 transition-opacity duration-500`}></div>
+                                <div className="relative p-3 bg-black border border-white/20 rounded-lg overflow-hidden">
+                                    <Activity size={28} className="text-white relative z-10" />
+                                    <div className={`absolute inset-0 bg-gradient-to-r ${activeRole.color} opacity-0 group-hover:opacity-20 transition-opacity`}></div>
+                                </div>
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-2xl font-bold tracking-[0.2em] uppercase text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]">Smart CMS</span>
+                                <div className="flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                                    <span className="text-[10px] text-slate-400 font-mono tracking-widest">SYSTEM ONLINE v.2.4.0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Center 3D/Holo Content */}
+                    <div className="relative z-10 flex-1 flex flex-col justify-center">
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={activeRole.id}
+                                initial={{ opacity: 0, x: -20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: 20 }}
+                                transition={{ duration: 0.4 }}
+                            >
+                                {/* Role ID Tag */}
+                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/5 backdrop-blur-md mb-6">
+                                    <activeRole.icon size={14} style={{ color: activeRole.hex }} />
+                                    <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-300">Class: {activeRole.id}</span>
+                                </div>
+
+                                {/* Main Title with Glitch Effect on Hover */}
+                                <h1 className="text-7xl xl:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white via-slate-200 to-slate-500 tracking-tighter mb-6 leading-[0.9] group relative w-fit">
+                                    {activeRole.label.toUpperCase()}
+                                    <span className="absolute inset-0 bg-clip-text text-transparent bg-gradient-to-b from-white to-slate-500 opacity-0 group-hover:opacity-100 group-hover:translate-x-[2px] transition-all duration-100 mix-blend-difference">
+                                         {activeRole.label.toUpperCase()}
                                     </span>
-                                </button>
-                            );
-                        })}
+                                </h1>
+                                
+                                {/* Dynamic Underline */}
+                                <motion.div 
+                                    className={`h-1 bg-gradient-to-r ${activeRole.color} mb-8`}
+                                    initial={{ width: 0 }}
+                                    animate={{ width: 100 }}
+                                    transition={{ duration: 0.8, delay: 0.2 }}
+                                />
+                                
+                                <p className="text-2xl text-slate-300 font-light max-w-lg leading-relaxed">
+                                    {activeRole.tagline}
+                                </p>
+                                <p className="mt-4 text-sm text-slate-500 font-mono max-w-md border-l border-slate-700 pl-4 py-1">
+                                    {`// ${activeRole.desc}`}
+                                </p>
+                            </motion.div>
+                        </AnimatePresence>
                     </div>
 
-                    {/* Header */}
-                    <div className="mb-6">
-                        <h2 className="text-3xl font-bold text-white mb-2">{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
-                        <p className="text-slate-400 text-sm">
-                            {isLogin ? `Login to access your ${loginMode} dashboard.` : `Register as a new ${loginMode}.`}
-                        </p>
+                    {/* Bottom Stats Grid */}
+                    <div className="relative z-10 grid grid-cols-3 gap-8 border-t border-white/10 pt-8">
+                        <div>
+                            <span className="text-[10px] text-slate-500 font-mono block mb-1">DATA FLOW</span>
+                            <div className="flex items-end gap-1">
+                                <span className="text-xl font-bold text-white">840</span>
+                                <span className="text-xs text-emerald-400 mb-1">TB/s</span>
+                            </div>
+                            <div className="w-full bg-slate-800 h-1 mt-2 rounded-full overflow-hidden">
+                                <motion.div 
+                                    className="h-full bg-emerald-500"
+                                    animate={{ width: ["40%", "70%", "50%"] }}
+                                    transition={{ repeat: Infinity, duration: 3 }}
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <span className="text-[10px] text-slate-500 font-mono block mb-1">ACTIVE NODES</span>
+                            <div className="flex items-end gap-1">
+                                <span className="text-xl font-bold text-white">4,209</span>
+                            </div>
+                             <div className="flex gap-1 mt-2">
+                                {[...Array(5)].map((_, i) => (
+                                    <div key={i} className={`h-1 flex-1 rounded-full ${i < 4 ? 'bg-cyan-500' : 'bg-slate-800'}`}></div>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <span className="text-[10px] text-slate-500 font-mono block mb-1">SECURITY</span>
+                            <div className="flex items-center gap-2">
+                                <ShieldCheck size={16} className="text-rose-500" />
+                                <span className="text-sm font-bold text-white">MAXIMUM</span>
+                            </div>
+                            <span className="text-[10px] text-slate-600 font-mono mt-1 block">ENCRYPTION: QUANTUM</span>
+                        </div>
+                    </div>
+                </motion.div>
+
+                {/* === RIGHT PANEL: COMMAND DECK (Mobile & Desktop) === */}
+                <div className="w-full lg:w-[55%] relative flex flex-col h-full overflow-y-auto">
+                    
+                    {/* Mobile Header (Only visible on small screens) */}
+                    <div className="lg:hidden p-6 flex items-center justify-between border-b border-white/10 bg-black/50 backdrop-blur-md sticky top-0 z-30">
+                        <div className="flex items-center gap-2">
+                            <Activity size={20} className={`text-${activeRole.id === 'student' ? 'cyan' : 'rose'}-400`} />
+                            <span className="font-bold text-lg tracking-wider">SMART CMS</span>
+                        </div>
+                        <div className={`h-2 w-2 rounded-full bg-gradient-to-r ${activeRole.color} shadow-[0_0_10px_currentColor]`}></div>
                     </div>
 
-                    {/* Form Container */}
-                    <AnimatePresence mode="wait">
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-12 lg:p-24 relative">
+                        
+                        {/* Background Decoration for Form */}
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl aspect-square bg-gradient-to-tr from-slate-900 via-transparent to-transparent rounded-full opacity-50 blur-3xl pointer-events-none"></div>
+
                         <motion.div 
-                            key={isLogin ? 'login' : 'register'}
-                            variants={contentVariants}
-                            initial="hidden"
-                            animate="visible"
-                            exit="exit"
+                            initial={{ opacity: 0, y: 30 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.2 }}
+                            className="w-full max-w-md relative z-20"
                         >
-                            <form onSubmit={(e) => { e.preventDefault(); handleAuthAction(isLogin ? 'login' : 'signup'); }} className="space-y-5">
-                                {/* Error Message */}
-                                {error && (
-                                    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-3 text-red-400 text-sm">
-                                        <AlertCircle size={16} /> {error}
-                                    </motion.div>
-                                )}
+                            {/* THE CYBER CARD */}
+                            <div className="relative bg-black/60 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl overflow-hidden group">
+                                
+                                {/* Dynamic Top Border */}
+                                <motion.div 
+                                    className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${activeRole.color}`}
+                                    layoutId="cardTop"
+                                />
+                                
+                                {/* Decorative Corner Brackets */}
+                                <CornerBrackets color={activeRole.hex} />
 
-                                {/* Name Field (Signup Only) */}
-                                {!isLogin && (
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-medium text-slate-400 uppercase tracking-wider ml-1">Full Name</label>
-                                        <div className="relative group">
-                                            <User className={`absolute left-4 top-3.5 ${activeTheme.text} transition-colors group-focus-within:text-white`} size={20} />
-                                            <input 
-                                                type="text" 
-                                                required 
+                                {/* Header */}
+                                <div className="relative z-10 mb-8 text-center">
+                                    <motion.h2 
+                                        key={isLogin ? 'login' : 'signup'}
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="text-3xl font-bold tracking-tight mb-2 text-white"
+                                    >
+                                        {isLogin ? 'Identity Verification' : 'Initialize Protocol'}
+                                    </motion.h2>
+                                    <div className="flex items-center justify-center gap-2 text-slate-500 text-xs font-mono uppercase">
+                                        <span>Secure Connection</span>
+                                        <span className="w-1 h-1 bg-emerald-500 rounded-full animate-ping"></span>
+                                        <span>Est.</span>
+                                    </div>
+                                </div>
+
+                                {/* Role Selector Grid */}
+                                <div className="grid grid-cols-4 gap-2 mb-8 p-1 bg-slate-900/80 rounded-xl border border-white/5 backdrop-blur-md">
+                                    {ROLES.map((role) => {
+                                        const isActive = loginMode === role.id;
+                                        const Icon = role.icon;
+                                        return (
+                                            <button
+                                                key={role.id}
+                                                onClick={() => { setLoginMode(role.id); setIsLogin(true); setError(''); }}
+                                                className={`relative h-16 rounded-lg flex flex-col items-center justify-center gap-1 transition-all duration-300 overflow-hidden ${isActive ? '' : 'hover:bg-white/5'}`}
+                                            >
+                                                {isActive && (
+                                                    <motion.div
+                                                        layoutId="roleActive"
+                                                        className={`absolute inset-0 bg-gradient-to-br ${role.color} opacity-20 border border-${role.hex} rounded-lg`}
+                                                    />
+                                                )}
+                                                <Icon 
+                                                    size={20} 
+                                                    className={`relative z-10 transition-transform duration-300 ${isActive ? 'scale-110 drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]' : 'text-slate-600'}`} 
+                                                    style={{ color: isActive ? role.hex : undefined }}
+                                                />
+                                                <span className={`relative z-10 text-[9px] uppercase font-bold tracking-wider ${isActive ? 'text-white' : 'text-slate-600'}`}>
+                                                    {role.id}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Form */}
+                                <form onSubmit={(e) => { e.preventDefault(); handleAuthAction(isLogin ? 'login' : 'signup'); }} className="space-y-6 relative z-10">
+                                    
+                                    <AnimatePresence>
+                                        {error && (
+                                            <motion.div
+                                                initial={{ height: 0, opacity: 0 }}
+                                                animate={{ height: 'auto', opacity: 1 }}
+                                                exit={{ height: 0, opacity: 0 }}
+                                                className="overflow-hidden"
+                                            >
+                                                <div className="bg-red-500/10 border-l-2 border-red-500 p-3 flex items-start gap-3 text-red-400 text-xs font-mono">
+                                                    <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                                                    <span className="leading-tight">ERROR_CODE_401: {error}</span>
+                                                </div>
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+
+                                    <div className="space-y-4">
+                                        {!isLogin && (
+                                            <TechInput 
+                                                icon={User}
+                                                type="text"
                                                 value={name}
                                                 onChange={(e) => setName(e.target.value)}
-                                                className={`w-full bg-slate-800/50 border border-slate-700 rounded-xl py-3 pl-12 pr-4 text-white placeholder-slate-500 outline-none transition-all duration-300 focus:bg-slate-800 focus:ring-1 ${activeTheme.border.replace('focus:', 'focus:ring-')}`}
-                                                placeholder="John Doe" 
+                                                placeholder="USER_ID // FULL NAME"
+                                                fieldName="name"
                                             />
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Email Field */}
-                                <div className="space-y-1">
-                                    <label className="text-xs font-medium text-slate-400 uppercase tracking-wider ml-1">Email</label>
-                                    <div className="relative group">
-                                        <Mail className={`absolute left-4 top-3.5 ${activeTheme.text} transition-colors group-focus-within:text-white`} size={20} />
-                                        <input 
-                                            type="email" 
-                                            required 
+                                        )}
+                                        <TechInput 
+                                            icon={Mail}
+                                            type="email"
                                             value={email}
                                             onChange={(e) => setEmail(e.target.value)}
-                                            className={`w-full bg-slate-800/50 border border-slate-700 rounded-xl py-3 pl-12 pr-4 text-white placeholder-slate-500 outline-none transition-all duration-300 focus:bg-slate-800 focus:ring-1 ${activeTheme.border.replace('focus:', 'focus:ring-')}`}
-                                            placeholder="you@university.edu" 
+                                            placeholder="COMMS_LINK // EMAIL"
+                                            fieldName="email"
                                         />
-                                    </div>
-                                </div>
-
-                                {/* Password Field */}
-                                <div className="space-y-1">
-                                    <label className="text-xs font-medium text-slate-400 uppercase tracking-wider ml-1">Password</label>
-                                    <div className="relative group">
-                                        <Lock className={`absolute left-4 top-3.5 ${activeTheme.text} transition-colors group-focus-within:text-white`} size={20} />
-                                        <input 
-                                            type="password" 
-                                            required 
+                                        <TechInput 
+                                            icon={Lock}
+                                            type="password"
                                             value={password}
                                             onChange={(e) => setPassword(e.target.value)}
-                                            className={`w-full bg-slate-800/50 border border-slate-700 rounded-xl py-3 pl-12 pr-4 text-white placeholder-slate-500 outline-none transition-all duration-300 focus:bg-slate-800 focus:ring-1 ${activeTheme.border.replace('focus:', 'focus:ring-')}`}
-                                            placeholder="••••••••" 
+                                            placeholder="ACCESS_CODE // PASSWORD"
+                                            fieldName="password"
                                         />
                                     </div>
-                                </div>
 
-                                {/* Action Button */}
-                                <motion.button
-                                    whileHover={{ scale: 1.02 }}
-                                    whileTap={{ scale: 0.98 }}
-                                    disabled={loading}
-                                    type="submit"
-                                    className={`w-full py-3.5 rounded-xl font-bold text-white shadow-xl flex items-center justify-center gap-2 bg-gradient-to-r ${activeTheme.gradient} hover:shadow-lg hover:shadow-${activeTheme.bg}/20 transition-all`}
-                                >
-                                    {loading ? <Spinner size="w-5 h-5" color="border-white" /> : (
-                                        <>
-                                            {isLogin ? 'Sign In' : 'Create Account'}
-                                            <ArrowRight size={18} />
-                                        </>
-                                    )}
-                                </motion.button>
-                            </form>
-
-                            {/* Footer / Toggle */}
-                            <div className="mt-8 text-center">
-                                {(loginMode === 'student' || loginMode === 'mentor' || loginMode === 'department') && (
-                                    <>
-                                        <p className="text-slate-500 text-sm mb-4">
-                                            {isLogin ? "Don't have an account?" : "Already have an account?"}{' '}
-                                            <button 
-                                                onClick={() => setIsLogin(!isLogin)} 
-                                                className={`font-semibold ${activeTheme.text} hover:underline focus:outline-none`}
-                                            >
-                                                {isLogin ? 'Sign Up' : 'Log In'}
-                                            </button>
-                                        </p>
-
-                                        {/* Divider */}
-                                        <div className="flex items-center gap-4 mb-4">
-                                            <div className="h-px flex-1 bg-slate-800"></div>
-                                            <span className="text-xs text-slate-600 font-medium">OR CONTINUE WITH</span>
-                                            <div className="h-px flex-1 bg-slate-800"></div>
+                                    <motion.button
+                                        whileHover={{ scale: 1.02 }}
+                                        whileTap={{ scale: 0.98 }}
+                                        disabled={loading}
+                                        type="submit"
+                                        className={`relative w-full py-4 rounded-lg font-bold text-white uppercase tracking-widest text-xs overflow-hidden group shadow-lg`}
+                                        style={{ boxShadow: `0 0 20px ${activeRole.hex}20` }}
+                                    >
+                                        <div className={`absolute inset-0 bg-gradient-to-r ${activeRole.color} transition-all duration-300 opacity-90 group-hover:opacity-100`}></div>
+                                        {/* Animated Scanline on Button */}
+                                        <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.2)_50%,transparent_75%)] bg-[size:250%_250%] animate-[shimmer_2s_infinite]"></div>
+                                        
+                                        <div className="relative flex items-center justify-center gap-2">
+                                            {loading ? <Spinner size="w-4 h-4" color="border-white" /> : (
+                                                <>
+                                                    <Terminal size={14} />
+                                                    <span>{isLogin ? 'EXECUTE LOGIN' : 'INITIALIZE REGISTRATION'}</span>
+                                                    <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                                                </>
+                                            )}
                                         </div>
+                                    </motion.button>
+                                </form>
 
-                                        {/* Social Login (Google) */}
-                                        {loginMode === 'student' && isLogin && (
+                                {/* Footer Links */}
+                                <div className="mt-8 relative z-10 flex flex-col gap-5">
+                                    <div className="flex items-center justify-between text-xs font-mono">
+                                        <span className="text-slate-500">{isLogin ? 'NO CREDENTIALS?' : 'ALREADY VERIFIED?'}</span>
+                                        <button 
+                                            onClick={() => setIsLogin(!isLogin)}
+                                            className="text-white hover:text-cyan-400 transition-colors flex items-center gap-1 group"
+                                        >
+                                            {isLogin ? 'CREATE IDENTITY' : 'ACCESS TERMINAL'}
+                                            <ArrowRight size={12} className="group-hover:translate-x-1 transition-transform" />
+                                        </button>
+                                    </div>
+
+                                    {loginMode === 'student' && isLogin && (
+                                        <div className="pt-4 border-t border-white/5">
                                             <button 
                                                 type="button"
                                                 onClick={() => handleAuthAction('google')}
                                                 disabled={loading}
-                                                className="w-full py-3 bg-white text-slate-900 font-bold rounded-xl flex items-center justify-center gap-3 hover:bg-slate-100 transition-colors"
+                                                className="w-full py-3 bg-white text-black font-bold rounded-lg flex items-center justify-center gap-3 text-xs uppercase tracking-wider hover:bg-slate-200 transition-colors shadow-[0_0_15px_rgba(255,255,255,0.2)]"
                                             >
-                                                <svg className="w-5 h-5" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path><path fill="none" d="M0 0h48v48H0z"></path></svg>
-                                                Google
+                                                <Globe size={16} className="text-blue-600" />
+                                                <span>Sync via Google</span>
                                             </button>
-                                        )}
-                                    </>
-                                )}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </motion.div>
-                    </AnimatePresence>
+
+                        {/* Mobile Bottom Stats */}
+                        <div className="lg:hidden mt-8 text-center">
+                            <p className="text-[10px] text-slate-600 font-mono">
+                                SYSTEM STATUS: <span className="text-emerald-500">OPTIMAL</span> • V.2.4.0
+                            </p>
+                        </div>
+                    </div>
                 </div>
-            </motion.div>
+            </div>
         </div>
     );
 };

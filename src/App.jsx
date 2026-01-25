@@ -1,7 +1,7 @@
-import React, { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React, { Suspense, lazy, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import Spinner from './components/ui/Spinner'; // Must be a static import for the fallback
+import Spinner from './components/ui/Spinner';
 
 // --- Lazy Load Pages ---
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
@@ -10,7 +10,6 @@ const LandingPage = lazy(() => import('./pages/LandingPage'));
 
 // --- Lazy Load Feature Components ---
 const VerifyEmail = lazy(() => import('./features/auth/VerifyEmail'));
-// NEW: Generic Pending/Rejected Screen replaces the old PendingMentor
 const PendingApproval = lazy(() => import('./features/auth/PendingApproval')); 
 
 // Student Features
@@ -36,6 +35,16 @@ const LeaveManagement = lazy(() => import('./features/leave/LeaveManagement'));
 const TimetableUpload = lazy(() => import('./features/admin/TimetableUpload'));
 const EmergencyLog = lazy(() => import('./features/admin/EmergencyLog'));
 const AdminChatPortal = lazy(() => import('./features/chat/AdminChatPortal'));
+
+// --- UX OPTIMIZATION: SCROLL TO TOP ---
+// Automatically scrolls to top of page on route change for a "snappy" feel
+const ScrollToTop = () => {
+    const { pathname } = useLocation();
+    useEffect(() => {
+        window.scrollTo(0, 0);
+    }, [pathname]);
+    return null;
+};
 
 // --- ERROR BOUNDARY COMPONENTS ---
 
@@ -68,12 +77,10 @@ class GlobalErrorBoundary extends React.Component {
     }
 
     static getDerivedStateFromError(error) {
-        // Update state so the next render will show the fallback UI.
         return { hasError: true };
     }
 
     componentDidCatch(error, errorInfo) {
-        // You can also log the error to an error reporting service here
         console.error("Uncaught error:", error, errorInfo);
     }
 
@@ -81,7 +88,6 @@ class GlobalErrorBoundary extends React.Component {
         if (this.state.hasError) {
             return <ErrorFallback />;
         }
-
         return this.props.children; 
     }
 }
@@ -102,7 +108,7 @@ const Suspended = ({ children }) => (
 // Protects routes that require a logged-in user
 function ProtectedRoute({ children }) {
     const { user, loading } = useAuth();
-    if (loading) return <Spinner />; // Use spinner while checking auth
+    if (loading) return <Spinner />; 
     return user ? children : <Navigate to="/login" />;
 }
 
@@ -116,7 +122,7 @@ function RoleRoute({ roles, children }) {
 function AppRoutes() {
     const { user, role, isAwaitingVerification, handleLogout, handleResendVerification, resendStatus } = useAuth();
 
-    // 1. Email Verification Gate (Existing)
+    // 1. Email Verification Gate
     if (isAwaitingVerification) {
         return (
             <Suspended>
@@ -125,8 +131,7 @@ function AppRoutes() {
         );
     }
 
-    // 2. NEW: Admin Approval Gate
-    // This catches both Students and Mentors who are in 'pending' status
+    // 2. Admin Approval Gate (Students & Mentors)
     if (role === 'pending_approval') {
         return (
             <Suspended>
@@ -135,8 +140,7 @@ function AppRoutes() {
         );
     }
 
-    // 3. NEW: Rejection Gate
-    // This catches users who have been explicitly rejected by Admin
+    // 3. Rejection Gate
     if (role === 'rejected_user') {
         return (
             <Suspended>
@@ -146,83 +150,88 @@ function AppRoutes() {
     }
     
     return (
-        <Routes>
-            <Route path="/" element={
-                !user ? <Suspended><LandingPage /></Suspended> : <Navigate to="/portal/dashboard" />
-            } />
-            <Route path="/login" element={
-                !user ? <Suspended><LoginPage /></Suspended> : <Navigate to="/portal/dashboard" />
-            } />
+        <>
+            {/* Smooth Scroll Reset on Navigation */}
+            <ScrollToTop />
             
-            <Route path="/portal" element={
-                <ProtectedRoute>
-                    <Suspended><DashboardPage /></Suspended>
-                </ProtectedRoute>
-            }>
-                {/* --- Student Routes --- */}
-                <Route path="dashboard" element={<Suspended><ComplaintList /></Suspended>} />
-                <Route path="new-complaint" element={
-                    <RoleRoute roles={['student']}><Suspended><ComplaintForm /></Suspended></RoleRoute>
+            <Routes>
+                <Route path="/" element={
+                    !user ? <Suspended><LandingPage /></Suspended> : <Navigate to="/portal/dashboard" />
                 } />
-                <Route path="marketplace" element={
-                    <RoleRoute roles={['student', 'admin']}><Suspended><StudentMarketplace /></Suspended></RoleRoute>
+                <Route path="/login" element={
+                    !user ? <Suspended><LoginPage /></Suspended> : <Navigate to="/portal/dashboard" />
                 } />
-                <Route path="lost-and-found" element={
-                    <RoleRoute roles={['student', 'admin']}><Suspended><LostAndFoundPortal /></Suspended></RoleRoute>
-                } />
-                <Route path="mentors" element={
-                    <RoleRoute roles={['student']}><Suspended><MentorPortal /></Suspended></RoleRoute>
-                } />
-                <Route path="leave" element={
-                    <RoleRoute roles={['student']}><Suspended><HostelLeavePortal /></Suspended></RoleRoute>
-                } />
-                <Route path="faq" element={
-                    <RoleRoute roles={['student']}><Suspended><FAQ /></Suspended></RoleRoute>
-                } />
-                <Route path="timetable" element={
-                    <RoleRoute roles={['student']}><Suspended><StudentTimetable /></Suspended></RoleRoute>
-                } />
-                <Route path="news" element={
-                    <RoleRoute roles={['student']}><Suspended><NewsPage /></Suspended></RoleRoute>
-                } />
+                
+                <Route path="/portal" element={
+                    <ProtectedRoute>
+                        <Suspended><DashboardPage /></Suspended>
+                    </ProtectedRoute>
+                }>
+                    {/* --- Student Routes --- */}
+                    <Route path="dashboard" element={<Suspended><ComplaintList /></Suspended>} />
+                    <Route path="new-complaint" element={
+                        <RoleRoute roles={['student']}><Suspended><ComplaintForm /></Suspended></RoleRoute>
+                    } />
+                    <Route path="marketplace" element={
+                        <RoleRoute roles={['student', 'admin']}><Suspended><StudentMarketplace /></Suspended></RoleRoute>
+                    } />
+                    <Route path="lost-and-found" element={
+                        <RoleRoute roles={['student', 'admin']}><Suspended><LostAndFoundPortal /></Suspended></RoleRoute>
+                    } />
+                    <Route path="mentors" element={
+                        <RoleRoute roles={['student']}><Suspended><MentorPortal /></Suspended></RoleRoute>
+                    } />
+                    <Route path="leave" element={
+                        <RoleRoute roles={['student']}><Suspended><HostelLeavePortal /></Suspended></RoleRoute>
+                    } />
+                    <Route path="faq" element={
+                        <RoleRoute roles={['student']}><Suspended><FAQ /></Suspended></RoleRoute>
+                    } />
+                    <Route path="timetable" element={
+                        <RoleRoute roles={['student']}><Suspended><StudentTimetable /></Suspended></RoleRoute>
+                    } />
+                    <Route path="news" element={
+                        <RoleRoute roles={['student']}><Suspended><NewsPage /></Suspended></RoleRoute>
+                    } />
 
-                {/* --- Mentor Routes --- */}
-                <Route path="mentor-dashboard" element={
-                    <RoleRoute roles={['mentor']}><Suspended><MentorDashboard /></Suspended></RoleRoute>
-                } />
+                    {/* --- Mentor Routes --- */}
+                    <Route path="mentor-dashboard" element={
+                        <RoleRoute roles={['mentor']}><Suspended><MentorDashboard /></Suspended></RoleRoute>
+                    } />
 
-                {/* --- Admin & Department Routes --- */}
-                <Route path="analytics" element={
-                    <RoleRoute roles={['admin']}><Suspended><AnalyticsDashboard /></Suspended></RoleRoute>
-                } />
-                <Route path="users" element={
-                    <RoleRoute roles={['admin']}><Suspended><UserManagement /></Suspended></RoleRoute>
-                } />
-                <Route path="mentor-approval" element={
-                    <RoleRoute roles={['admin']}><Suspended><MentorApproval /></Suspended></RoleRoute>
-                } />
-                <Route path="knowledge-base" element={
-                    <RoleRoute roles={['admin']}><Suspended><KnowledgeBaseManagement /></Suspended></RoleRoute>
-                } />
-                <Route path="leave-management" element={
-                    <RoleRoute roles={['admin', 'department']}><Suspended><LeaveManagement /></Suspended></RoleRoute>
-                } />
-                <Route path="upload-timetable" element={
-                    <RoleRoute roles={['admin']}><Suspended><TimetableUpload /></Suspended></RoleRoute>
-                } />
-                <Route path="emergency-log" element={
-                    <RoleRoute roles={['admin', 'department']}><Suspended><EmergencyLog /></Suspended></RoleRoute>
-                } />
-                <Route path="student-chats" element={
-                    <RoleRoute roles={['admin']}><Suspended><AdminChatPortal /></Suspended></RoleRoute>
-                } />
+                    {/* --- Admin & Department Routes --- */}
+                    <Route path="analytics" element={
+                        <RoleRoute roles={['admin']}><Suspended><AnalyticsDashboard /></Suspended></RoleRoute>
+                    } />
+                    <Route path="users" element={
+                        <RoleRoute roles={['admin']}><Suspended><UserManagement /></Suspended></RoleRoute>
+                    } />
+                    <Route path="mentor-approval" element={
+                        <RoleRoute roles={['admin']}><Suspended><MentorApproval /></Suspended></RoleRoute>
+                    } />
+                    <Route path="knowledge-base" element={
+                        <RoleRoute roles={['admin']}><Suspended><KnowledgeBaseManagement /></Suspended></RoleRoute>
+                    } />
+                    <Route path="leave-management" element={
+                        <RoleRoute roles={['admin', 'department']}><Suspended><LeaveManagement /></Suspended></RoleRoute>
+                    } />
+                    <Route path="upload-timetable" element={
+                        <RoleRoute roles={['admin']}><Suspended><TimetableUpload /></Suspended></RoleRoute>
+                    } />
+                    <Route path="emergency-log" element={
+                        <RoleRoute roles={['admin', 'department']}><Suspended><EmergencyLog /></Suspended></RoleRoute>
+                    } />
+                    <Route path="student-chats" element={
+                        <RoleRoute roles={['admin']}><Suspended><AdminChatPortal /></Suspended></RoleRoute>
+                    } />
 
-                {/* --- Index/Fallback Route --- */}
-                <Route index element={<Navigate to="/portal/dashboard" />} /> 
-            </Route>
+                    {/* --- Index/Fallback Route --- */}
+                    <Route index element={<Navigate to="/portal/dashboard" />} /> 
+                </Route>
 
-            <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
+                <Route path="*" element={<Navigate to="/" />} />
+            </Routes>
+        </>
     );
 }
 

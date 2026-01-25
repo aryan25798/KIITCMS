@@ -59,14 +59,18 @@ export const AuthProvider = ({ children }) => {
                     }
 
                     // 2. Fetch User Profile from Firestore to determine Role & Status
+                    // OPTIMIZATION: Fetch both collections in parallel (Promise.all) instead of sequentially.
+                    // This cuts the loading time roughly in half.
+                    const userRef = doc(db, 'users', currentUser.uid);
+                    const mentorRef = doc(db, 'mentors', currentUser.uid);
+
+                    const [userSnap, mentorSnap] = await Promise.all([
+                        getDoc(userRef),
+                        getDoc(mentorRef)
+                    ]);
+
                     let determinedRole = 'student'; // Default safe role
                     let status = 'pending'; // Default safe status
-
-                    const userRef = doc(db, 'users', currentUser.uid);
-                    const userSnap = await getDoc(userRef);
-
-                    const mentorRef = doc(db, 'mentors', currentUser.uid);
-                    const mentorSnap = await getDoc(mentorRef);
 
                     if (userSnap.exists()) {
                         // --- CASE A: STANDARD USER / STUDENT ---
